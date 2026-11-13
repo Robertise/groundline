@@ -14,6 +14,16 @@ class Settings(BaseSettings):
     max_consecutive_errors: int = 3
     send_lock_seconds: int = 600
 
+    x_client_id: str = ""
+    x_client_secret: str = ""
+    x_redirect_uri: str = "http://127.0.0.1:8000/callback"
+    secret_key: str = ""  # Fernet key for token encryption
+    aws_region: str = "ap-southeast-1"
+    bedrock_model_id: str = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    llm_input_usd_per_mtok: float = 1.0  # verify against Bedrock pricing; shown as an estimate
+    llm_output_usd_per_mtok: float = 5.0
+    fixtures_path: str = "./fixtures/demo_x.json"
+
     @field_validator("mode")
     @classmethod
     def validate_mode(cls, v: str) -> str:
@@ -21,6 +31,19 @@ class Settings(BaseSettings):
         if v not in allowed:
             raise ValueError(f"mode must be one of {allowed}, got {v!r}")
         return v
+
+
+def missing_live_settings(s: Settings) -> list[str]:
+    if s.mode == "mock":
+        return []
+    missing = []
+    if not s.x_client_id:
+        missing.append("x_client_id")
+    if not s.x_client_secret:
+        missing.append("x_client_secret")
+    if not s.secret_key:
+        missing.append("secret_key")
+    return missing
 
 
 def get_settings() -> Settings:

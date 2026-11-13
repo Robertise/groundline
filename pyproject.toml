@@ -14,6 +14,9 @@ dependencies = [
   "httpx>=0.27",
   "pydantic-settings>=2.4",
   "tzdata>=2024.1",
+  "boto3>=1.35",
+  "cryptography>=43",
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +24,9 @@ dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
