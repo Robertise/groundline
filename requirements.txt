@@ -1,0 +1,23 @@
+# Web framework and server
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+python-multipart>=0.0.9
+
+# HTTP client (X API calls & test client)
+httpx>=0.27
+
+# Configuration & environment variables
+pydantic-settings>=2.4
+
+# Token encryption (Fernet)
+cryptography>=43
+
+# AWS Bedrock LLM
+boto3>=1.35
+
+# Timezone data (required on Windows for zoneinfo)
+tzdata>=2024.1
+
+# Testing
+pytest>=8.0
