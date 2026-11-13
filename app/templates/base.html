@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ title or "Groundline" }}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; color: #111; line-height: 1.5; }
+    header { border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-size: 22px; font-weight: bold; text-decoration: none; color: #111; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+    .badge-mock { background: #e0f2fe; color: #0369a1; }
+    .badge-dry { background: #fef3c7; color: #b45309; }
+    .badge-live { background: #fee2e2; color: #b91c1c; }
+    .banner-red { background: #fee2e2; border: 1px solid #ef4444; color: #b91c1c; padding: 10px 15px; border-radius: 6px; margin-bottom: 15px; }
+    .banner-msg { background: #dcfce7; border: 1px solid #22c55e; color: #15803d; padding: 10px 15px; border-radius: 6px; margin-bottom: 15px; }
+    .banner-err { background: #fee2e2; border: 1px solid #ef4444; color: #b91c1c; padding: 10px 15px; border-radius: 6px; margin-bottom: 15px; }
+    nav a { margin-right: 15px; text-decoration: none; color: #2563eb; font-weight: 500; }
+    nav a:hover { text-decoration: underline; }
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 25px; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px 12px; text-align: left; font-size: 14px; vertical-align: top; }
+    th { background: #f9fafb; font-weight: 600; }
+    .btn { display: inline-block; padding: 6px 12px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 4px; font-size: 14px; border: none; cursor: pointer; }
+    .btn:hover { background: #1d4ed8; }
+    .btn-secondary { background: #6b7280; }
+    .btn-secondary:hover { background: #4b5563; }
+    .form-group { margin-bottom: 15px; }
+    label { display: block; font-weight: 600; margin-bottom: 5px; font-size: 14px; }
+    input[type="text"], input[type="number"], textarea { width: 100%; max-width: 600px; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
+    textarea { height: 80px; }
+    .tabs { margin-bottom: 15px; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px; }
+    .tabs a { margin-right: 15px; text-decoration: none; color: #4b5563; font-weight: 500; padding: 4px 8px; border-radius: 4px; }
+    .tabs a.active { background: #e5e7eb; color: #111; font-weight: bold; }
+    .app-note { font-size: 12px; color: #6b7280; margin-top: 30px; border-top: 1px solid #eee; padding-top: 10px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <a href="/campaigns" class="brand">Groundline</a>
+      <span style="margin-left: 10px;">
+        {% if mode == "mock" %}
+          <span class="badge badge-mock">MOCK — demo data, no external calls</span>
+        {% elif mode == "dry_run" %}
+          <span class="badge badge-dry">DRY-RUN — reads real data, never sends</span>
+        {% else %}
+          <span class="badge badge-live">LIVE</span>
+        {% endif %}
+      </span>
+    </div>
+    <div>
+      <nav style="display: inline-block; margin-right: 20px;">
+        <a href="/campaigns">Campaigns</a>
+        <a href="/costs">Costs</a>
+      </nav>
+      {% if sender %}
+        <span style="font-size: 14px; font-weight: 500;">Connected as @{{ sender.username }}</span>
+      {% elif mode != "mock" %}
+        <a href="/connect" class="btn">Connect X</a>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if missing_settings %}
+    <div class="banner-red">
+      <strong>Configuration Warning:</strong> Missing required settings for live/dry-run: {{ missing_settings|join(', ') }}
+    </div>
+  {% endif %}
+
+  {% if msg %}
+    <div class="banner-msg">{{ msg }}</div>
+  {% endif %}
+  {% if error %}
+    <div class="banner-err">{{ error }}</div>
+  {% endif %}
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <div class="app-note">
+    Open this app at <a href="http://127.0.0.1:8000">http://127.0.0.1:8000</a>
+  </div>
+</body>
+</html>

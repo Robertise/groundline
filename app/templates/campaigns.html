@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+  <h2>Campaigns</h2>
+  <a href="/campaigns/new" class="btn">+ New Campaign</a>
+</div>
+
+{% if not campaigns %}
+  <p>No campaigns yet. <a href="/campaigns/new">Create your first campaign</a> to start discovery.</p>
+{% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Campaign Name</th>
+        <th>Created</th>
+        <th>Prospects (by state)</th>
+        <th>Last Run Status</th>
+        <th>Last Run Cost</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in campaigns %}
+      <tr>
+        <td><strong><a href="/campaigns/{{ c.id }}">{{ c.name }}</a></strong></td>
+        <td>{{ c.created_at }}</td>
+        <td>
+          Scored: {{ c.counts_by_state.get('scored', 0) }},
+          Filtered: {{ c.counts_by_state.get('filtered_out', 0) }},
+          Discovered: {{ c.counts_by_state.get('discovered', 0) }},
+          Approved: {{ c.counts_by_state.get('approved', 0) }}
+        </td>
+        <td>{{ c.last_run_status or "None" }}</td>
+        <td>${{ "%.4f"|format(c.last_run_cost or 0.0) }}</td>
+        <td><a href="/campaigns/{{ c.id }}" class="btn btn-secondary">View</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}

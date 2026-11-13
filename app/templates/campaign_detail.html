@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
+  <div>
+    <h2>{{ campaign.name }}</h2>
+    <p style="color: #4b5563; margin-top: -10px;">{{ campaign.segment }}</p>
+  </div>
+  <div>
+    <form action="/campaigns/{{ campaign.id }}/run" method="POST" style="display: inline;">
+      <button type="submit" class="btn" style="padding: 10px 20px; font-size: 15px;">Run discovery</button>
+    </form>
+  </div>
+</div>
+
+<div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 25px;">
+  <div style="flex: 1; min-width: 280px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 15px; background: #fafafa;">
+    <h4 style="margin-top: 0;">Budget & Cost Estimate</h4>
+    <p><strong>Campaign Budget:</strong> ${{ "%.2f"|format(campaign.budget_usd) }}</p>
+    <p><strong>Spent so far:</strong> ${{ "%.4f"|format(spent_so_far) }}</p>
+    <p><strong>Max Run Cost Estimate:</strong> ${{ "%.4f"|format(cost_est.total_usd) }}
+      <br><small style="color: #6b7280;">(X: ${{ "%.4f"|format(cost_est.x_usd) }}, LLM: ${{ "%.4f"|format(cost_est.llm_usd) }})</small>
+    </p>
+  </div>
+
+  <div style="flex: 2; min-width: 320px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 15px; background: #fafafa;">
+    <h4 style="margin-top: 0;">Campaign Settings</h4>
+    <p style="margin: 4px 0;"><strong>Keywords:</strong> {{ campaign.search_keywords or "None" }} (max {{ campaign.search_max_posts }} posts)</p>
+    <p style="margin: 4px 0;"><strong>Seeds:</strong> {{ campaign.seed_handles or "None" }} (max {{ campaign.seed_following_max }} following)</p>
+    <p style="margin: 4px 0;"><strong>Followers:</strong> {{ "Yes (max " ~ campaign.followers_max ~ ")" if campaign.include_sender_followers else "No" }}</p>
+    <p style="margin: 4px 0;"><strong>Deep Profiles Max:</strong> {{ campaign.max_deep_profiles }} | <strong>Min Score:</strong> {{ campaign.min_score }}</p>
+  </div>
+</div>
+
+<h3>Discovery Runs</h3>
+{% if not runs %}
+  <p style="color: #6b7280;">No discovery runs yet for this campaign.</p>
+{% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Run ID</th>
+        <th>Status</th>
+        <th>Started</th>
+        <th>Finished</th>
+        <th>Counts</th>
+        <th>Cost</th>
+        <th>Error</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td>#{{ r.id }}</td>
+        <td><strong>{{ r.status }}</strong></td>
+        <td>{{ r.started_at }}</td>
+        <td>{{ r.finished_at or "In progress" }}</td>
+        <td>
+          {% if r.counts_dict %}
+            Found: {{ r.counts_dict.found }}, Scored: {{ r.counts_dict.scored }},
+            Screened: {{ r.counts_dict.screened }}, Left: {{ r.counts_dict.left_discovered }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td>${{ "%.4f"|format(r.cost or 0.0) }}</td>
+        <td style="color: #dc2626; font-size: 13px;">{{ r.error or "" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+
+<h3 style="margin-top: 35px;">Prospects</h3>
+<div class="tabs">
+  <a href="/campaigns/{{ campaign.id }}?view=scored" class="{% if current_view == 'scored' %}active{% endif %}">Scored ({{ counts_by_tab.scored }})</a>
+  <a href="/campaigns/{{ campaign.id }}?view=filtered" class="{% if current_view == 'filtered' %}active{% endif %}">Filtered ({{ counts_by_tab.filtered }})</a>
+  <a href="/campaigns/{{ campaign.id }}?view=pending" class="{% if current_view == 'pending' %}active{% endif %}">Pending / Discovered ({{ counts_by_tab.pending }})</a>
+  <a href="/campaigns/{{ campaign.id }}?view=all" class="{% if current_view == 'all' %}active{% endif %}">All ({{ counts_by_tab.all }})</a>
+</div>
+
+{% if not prospects %}
+  <p style="color: #6b7280;">No prospects in this view.</p>
+{% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>User</th>
+        <th>Score</th>
+        <th>Role / Segment</th>
+        <th>Why Fit</th>
+        <th>Evidence</th>
+        <th>Sources</th>
+        <th>Can DM</th>
+        <th>State & Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in prospects %}
+      <tr>
+        <td>
+          <a href="https://x.com/{{ p.username }}" target="_blank" rel="noopener">@{{ p.username }}</a>
+          <br><small style="color: #6b7280;">{{ p.name or "" }}</small>
+        </td>
+        <td style="font-size: 16px; font-weight: bold;">
+          {{ p.score if p.score is not none else "-" }}
+        </td>
+        <td>
+          <strong>{{ p.role or "-" }}</strong>
+          <br><small>{{ p.segment or "" }}</small>
+        </td>
+        <td style="max-width: 220px; font-size: 13px;">
+          {% for line in p.why_fit_lines %}
+            <div>{{ line }}</div>
+          {% endfor %}
+          {% if p.caution %}
+            <div style="color: #b45309; font-style: italic; margin-top: 4px;">Caution: {{ p.caution }}</div>
+          {% endif %}
+        </td>
+        <td style="max-width: 250px; font-size: 13px;">
+          {% for ev in p.evidence_items %}
+            <div style="margin-bottom: 4px;">
+              <a href="{{ ev.url }}" target="_blank" rel="noopener" style="text-decoration: none; color: #2563eb;">
+                "{{ ev.quote[:120] }}{% if ev.quote|length > 120 %}...{% endif %}"
+              </a>
+              <small style="color: #6b7280;">({{ ev.source }})</small>
+            </div>
+          {% endfor %}
+        </td>
+        <td>
+          {% for s in p.sources_list %}
+            <span style="display: inline-block; background: #e5e7eb; border-radius: 3px; padding: 2px 5px; font-size: 11px; margin: 1px;">{{ s }}</span>
+          {% endfor %}
+        </td>
+        <td>
+          {% if p.receives_your_dm == 1 %}
+            <span style="color: #15803d; font-weight: 600;">yes</span>
+          {% elif p.receives_your_dm == 0 %}
+            <span style="color: #b91c1c; font-weight: 600;">no</span>
+          {% else %}
+            <span style="color: #6b7280;">unknown</span>
+          {% endif %}
+        </td>
+        <td>
+          <strong>{{ p.state }}</strong>
+          {% if p.state_reason %}
+            <br><small style="color: #4b5563;">{{ plain_reasons.get(p.state_reason, p.state_reason) }}</small>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}

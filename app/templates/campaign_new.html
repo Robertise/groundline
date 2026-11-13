@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>New Campaign</h2>
+
+{% if errors %}
+  <div class="banner-err">
+    <ul>
+      {% for err in errors %}
+        <li>{{ err }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+<form action="/campaigns" method="POST">
+  <div class="form-group">
+    <label for="name">Campaign Name *</label>
+    <input type="text" id="name" name="name" value="{{ form.name or '' }}" required>
+  </div>
+
+  <div class="form-group">
+    <label for="segment">Target Segment *</label>
+    <textarea id="segment" name="segment" placeholder="AI and robotics founders and builders in Southeast Asia" required>{{ form.segment or '' }}</textarea>
+  </div>
+
+  <div class="form-group">
+    <label for="brief">Campaign Brief</label>
+    <textarea id="brief" name="brief" placeholder="Who you are and what you invite people to (used for message drafting)">{{ form.brief or '' }}</textarea>
+  </div>
+
+  <fieldset style="border: 1px solid #d1d5db; border-radius: 6px; padding: 15px; margin-bottom: 20px; max-width: 600px;">
+    <legend style="font-weight: bold; font-size: 15px; padding: 0 5px;">Discovery Sources (provide at least one)</legend>
+
+    <div class="form-group">
+      <label for="handles">Target Handles (one per line or comma-separated)</label>
+      <textarea id="handles" name="handles" placeholder="e.g. handle1, handle2">{{ form.handles or '' }}</textarea>
+    </div>
+
+    <div class="form-group">
+      <label for="search_keywords">Search Keywords (comma-separated)</label>
+      <input type="text" id="search_keywords" name="search_keywords" placeholder="e.g. robot, LLM, agent" value="{{ form.search_keywords or '' }}">
+    </div>
+
+    <div class="form-group">
+      <label for="search_max_posts">Search Max Posts (1–1000)</label>
+      <input type="number" id="search_max_posts" name="search_max_posts" min="1" max="1000" value="{{ form.search_max_posts or 100 }}">
+    </div>
+
+    <div class="form-group">
+      <label for="seed_handles">Seed Handles (read who they follow)</label>
+      <input type="text" id="seed_handles" name="seed_handles" placeholder="e.g. demo_seed_investor" value="{{ form.seed_handles or '' }}">
+    </div>
+
+    <div class="form-group">
+      <label for="seed_following_max">Max Following per Seed (1–1000)</label>
+      <input type="number" id="seed_following_max" name="seed_following_max" min="1" max="1000" value="{{ form.seed_following_max or 100 }}">
+    </div>
+
+    <div class="form-group">
+      <label>
+        <input type="checkbox" name="include_sender_followers" value="1" {% if form.include_sender_followers != 0 and form.include_sender_followers != '0' %}checked{% endif %}>
+        Include my account's followers
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label for="followers_max">Max Followers to Read (1–1000)</label>
+      <input type="number" id="followers_max" name="followers_max" min="1" max="1000" value="{{ form.followers_max or 200 }}">
+    </div>
+  </fieldset>
+
+  <fieldset style="border: 1px solid #d1d5db; border-radius: 6px; padding: 15px; margin-bottom: 20px; max-width: 600px;">
+    <legend style="font-weight: bold; font-size: 15px; padding: 0 5px;">Scoring & Budget</legend>
+
+    <div class="form-group">
+      <label for="max_deep_profiles">Max Deep Profiles to Score (1–1000)</label>
+      <input type="number" id="max_deep_profiles" name="max_deep_profiles" min="1" max="1000" value="{{ form.max_deep_profiles or 40 }}">
+    </div>
+
+    <div class="form-group">
+      <label for="min_score">Minimum Score to Keep (1–100)</label>
+      <input type="number" id="min_score" name="min_score" min="1" max="100" value="{{ form.min_score or 60 }}">
+    </div>
+
+    <div class="form-group">
+      <label for="budget_usd">Budget (USD, 0.1–50)</label>
+      <input type="number" id="budget_usd" name="budget_usd" step="0.1" min="0.1" max="50" value="{{ form.budget_usd or 5.0 }}">
+    </div>
+  </fieldset>
+
+  <button type="submit" class="btn">Create Campaign</button>
+  <a href="/campaigns" class="btn btn-secondary" style="margin-left: 10px;">Cancel</a>
+</form>
+{% endblock %}
