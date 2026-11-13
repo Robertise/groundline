@@ -2,7 +2,7 @@ import os
 import sqlite3
 from contextlib import contextmanager
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCHEMA_SQL = """
 CREATE TABLE sender_accounts (
   id INTEGER PRIMARY KEY,
@@ -174,10 +174,67 @@ def init_db(conn: sqlite3.Connection) -> None:
     ver = cur.fetchone()[0]
     if ver == 0:
         conn.executescript(SCHEMA_SQL)
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    elif ver == 1:
-        return
-    else:
+        conn.execute("PRAGMA user_version = 1")
+        ver = 1
+
+    if ver < SCHEMA_VERSION:
+        for target_ver in range(ver + 1, SCHEMA_VERSION + 1):
+            if target_ver in MIGRATIONS:
+                migration_sql = MIGRATIONS[target_ver]
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    for stmt in [s.strip() for s in migration_sql.split(";") if s.strip()]:
+                        conn.execute(stmt)
+                    conn.execute(f"PRAGMA user_version = {target_ver}")
+                    conn.execute("COMMIT")
+                except BaseException:
+                    conn.execute("ROLLBACK")
+                    raise
+            else:
+                raise RuntimeError(f"Missing migration for version {target_ver}")
+    elif ver > SCHEMA_VERSION:
         raise RuntimeError(
             f"Database version {ver} is higher than supported schema version {SCHEMA_VERSION}"
         )
+
+
+V2_SQL = """
+CREATE TABLE discovery_runs (
+  id INTEGER PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id),
+  status TEXT NOT NULL CHECK (status IN
+    ('running','completed','budget_reached','rate_limited','auth_error','failed')),
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  counts TEXT NOT NULL DEFAULT '{}',
+  error TEXT
+);
+CREATE TABLE oauth_states (
+  state TEXT PRIMARY KEY,
+  code_verifier TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+ALTER TABLE campaigns ADD COLUMN segment TEXT NOT NULL DEFAULT '';
+ALTER TABLE campaigns ADD COLUMN handles TEXT NOT NULL DEFAULT '';
+ALTER TABLE campaigns ADD COLUMN search_keywords TEXT NOT NULL DEFAULT '';
+ALTER TABLE campaigns ADD COLUMN search_max_posts INTEGER NOT NULL DEFAULT 100;
+ALTER TABLE campaigns ADD COLUMN seed_handles TEXT NOT NULL DEFAULT '';
+ALTER TABLE campaigns ADD COLUMN seed_following_max INTEGER NOT NULL DEFAULT 100;
+ALTER TABLE campaigns ADD COLUMN include_sender_followers INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE campaigns ADD COLUMN followers_max INTEGER NOT NULL DEFAULT 200;
+ALTER TABLE campaigns ADD COLUMN max_deep_profiles INTEGER NOT NULL DEFAULT 40;
+ALTER TABLE campaigns ADD COLUMN min_score INTEGER NOT NULL DEFAULT 60;
+ALTER TABLE x_users ADD COLUMN protected INTEGER;
+ALTER TABLE x_users ADD COLUMN location TEXT;
+ALTER TABLE x_users ADD COLUMN followers_count INTEGER;
+ALTER TABLE x_users ADD COLUMN posts_fetched_at TEXT;
+ALTER TABLE prospects ADD COLUMN sources TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE prospects ADD COLUMN segment TEXT;
+ALTER TABLE prospects ADD COLUMN role TEXT;
+ALTER TABLE prospects ADD COLUMN caution TEXT;
+ALTER TABLE ledger ADD COLUMN run_id INTEGER REFERENCES discovery_runs(id);
+ALTER TABLE ledger ADD COLUMN detail TEXT;
+ALTER TABLE ledger ADD COLUMN simulated INTEGER NOT NULL DEFAULT 0;
+"""
+
+MIGRATIONS = {2: V2_SQL}

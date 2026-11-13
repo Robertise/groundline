@@ -43,7 +43,9 @@ OUTREACH_TRANSITIONS: dict[tuple[str, str], frozenset[str]] = {
 OUTREACH_EXTRA_FIELDS = frozenset(
     {"x_dm_event_id", "x_dm_conversation_id", "attempt_started_at", "sent_at"}
 )
-PROSPECT_EXTRA_FIELDS = frozenset({"score", "fit_reasons"})
+PROSPECT_EXTRA_FIELDS = frozenset(
+    {"score", "fit_reasons", "segment", "role", "caution"}
+)
 
 
 def transition(
