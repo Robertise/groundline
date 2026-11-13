@@ -94,4 +94,11 @@ def build_llm(settings: Settings) -> LLM:
     if settings.mode == "mock":
         return FakeLLM()
     else:
-        return BedrockLLM(settings.bedrock_model_id, settings.aws_region)
+        return BedrockLLM(
+            settings.bedrock_model_id,
+            settings.aws_region,
+            access_key_id=settings.aws_access_key_id,
+            secret_access_key=settings.aws_secret_access_key,
+            session_token=settings.aws_session_token,
+            profile=settings.aws_profile,
+        )

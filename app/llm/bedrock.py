@@ -4,11 +4,56 @@ from botocore.exceptions import BotoCoreError, ClientError
 from app.llm.base import LLMResult, LLMError
 
 
+def make_bedrock_client(
+    region: str,
+    access_key_id: str = "",
+    secret_access_key: str = "",
+    session_token: str = "",
+    profile: str = "",
+):
+    """Explicit keys from settings win; else a named profile; else the default AWS chain."""
+    if access_key_id and secret_access_key:
+        session = boto3.Session(
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+            aws_session_token=session_token or None,
+            region_name=region,
+        )
+    elif access_key_id or secret_access_key:
+        raise LLMError(
+            "Set both GROUNDLINE_AWS_ACCESS_KEY_ID and GROUNDLINE_AWS_SECRET_ACCESS_KEY, or neither"
+        )
+    elif profile:
+        session = boto3.Session(profile_name=profile, region_name=region)
+    else:
+        session = boto3.Session(region_name=region)
+    return session.client("bedrock-runtime")
+
+
 class BedrockLLM:
-    def __init__(self, model_id: str, region: str, client=None):
+    def __init__(
+        self,
+        model_id: str,
+        region: str,
+        client=None,
+        access_key_id: str = "",
+        secret_access_key: str = "",
+        session_token: str = "",
+        profile: str = "",
+    ):
         self.model_id = model_id
         self.region = region
-        self.client = client or boto3.client("bedrock-runtime", region_name=region)
+        self.client = (
+            client
+            if client is not None
+            else make_bedrock_client(
+                region=region,
+                access_key_id=access_key_id,
+                secret_access_key=secret_access_key,
+                session_token=session_token,
+                profile=profile,
+            )
+        )
 
     def call_tool(
         self,

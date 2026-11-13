@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     secret_key: str = ""  # Fernet key for token encryption
     aws_region: str = "ap-southeast-1"
     bedrock_model_id: str = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_session_token: str = ""
+    aws_profile: str = ""
     llm_input_usd_per_mtok: float = 1.0  # verify against Bedrock pricing; shown as an estimate
     llm_output_usd_per_mtok: float = 5.0
     fixtures_path: str = "./fixtures/demo_x.json"
