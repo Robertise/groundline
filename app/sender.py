@@ -58,6 +58,7 @@ def send_one(
     clock,
     daily_cap: int,
     tz_name: str,
+    report: dict | None = None,
 ) -> str:
     # 1. Read the row outside a transaction. If it is not approved, return "skipped".
     cur = conn.execute(
@@ -76,16 +77,19 @@ def send_one(
     reach = transport.check_recipient(sender_account_id, recipient_x_user_id)
     if reach.can_dm is False:
         with db.transaction(conn):
-            transition(
-                conn,
-                "outreach",
-                outreach_id,
-                "approved",
-                "blocked",
-                "system",
-                iso(clock.now()),
-                reason=REASON_PRECHECK_NOT_ACCEPTING,
-            )
+            try:
+                transition(
+                    conn,
+                    "outreach",
+                    outreach_id,
+                    "approved",
+                    "blocked",
+                    "system",
+                    iso(clock.now()),
+                    reason=REASON_PRECHECK_NOT_ACCEPTING,
+                )
+            except StaleStateError:
+                return "skipped"
         return "blocked"
     if reach.can_dm is None:
         return "skipped"
@@ -97,16 +101,19 @@ def send_one(
             (recipient_x_user_id,),
         )
         if cur_supp.fetchone() is not None:
-            transition(
-                conn,
-                "outreach",
-                outreach_id,
-                "approved",
-                "blocked",
-                "system",
-                iso(clock.now()),
-                reason=REASON_SUPPRESSED,
-            )
+            try:
+                transition(
+                    conn,
+                    "outreach",
+                    outreach_id,
+                    "approved",
+                    "blocked",
+                    "system",
+                    iso(clock.now()),
+                    reason=REASON_SUPPRESSED,
+                )
+            except StaleStateError:
+                return "skipped"
             return "blocked"
 
         tz = zoneinfo.ZoneInfo(tz_name)
@@ -142,6 +149,8 @@ def send_one(
 
     # 4. Outside any transaction, call transport.send_dm(...)
     try:
+        if report is not None:
+            report["called_send_dm"] = True
         outcome = transport.send_dm(
             sender_account_id, recipient_x_user_id, final_text
         )
@@ -271,20 +280,12 @@ def send_batch(
         consecutive_errors = 0
 
         for i, oid in enumerate(approved_ids):
-            send_calls_before = getattr(transport, "send_calls", None)
             batch_result.outreach_ids.append(oid)
+            report: dict = {}
             result = send_one(
-                conn, oid, transport, clock, daily_cap, settings.timezone
+                conn, oid, transport, clock, daily_cap, settings.timezone, report=report
             )
-            send_calls_after = getattr(transport, "send_calls", None)
-            called_send_dm = (
-                (send_calls_after > send_calls_before)
-                if (
-                    send_calls_before is not None
-                    and send_calls_after is not None
-                )
-                else result in ("sent", "failed", "unknown")
-            )
+            called_send_dm = bool(report.get("called_send_dm"))
 
             if result == "sent":
                 batch_result.sent += 1

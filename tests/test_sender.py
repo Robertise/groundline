@@ -11,8 +11,11 @@ from app.sender import send_one, send_batch, recover_on_startup
 from app.approval import (
     resolve_unknown,
     add_suppression,
+    cancel_approval,
 )
 from app.x.base import (
+    Reachability,
+    SendOutcome,
     REASON_RECIPIENT_NOT_ACCEPTING,
     REASON_SENDER_NOT_VERIFIED,
     REASON_PRECHECK_NOT_ACCEPTING,
@@ -439,3 +442,66 @@ def test_every_state_change_has_an_audit_row(conn, clock, settings):
         audit_row = cur_a.fetchone()
         assert audit_row is not None
         assert audit_row["to_state"] == r["state"]
+
+
+def test_batch_pauses_only_after_a_real_send_call(conn, clock, settings):
+    seeded = seed(conn, clock, n_recipients=3)
+    approve_all(conn, clock, seeded)
+
+    class CustomTransport:
+        def check_recipient(self, sender_account_id: int, recipient_x_user_id: str):
+            if recipient_x_user_id == seeded.user_ids[0]:
+                return Reachability(can_dm=False)
+            return Reachability(can_dm=True)
+
+        def send_dm(self, sender_account_id: int, recipient_x_user_id: str, text: str):
+            return SendOutcome("sent", dm_event_id="evt_123")
+
+    transport = CustomTransport()
+    sleep_calls = []
+    custom_settings = Settings(
+        mode=settings.mode,
+        db_path=settings.db_path,
+        min_seconds_between_sends=5.0,
+    )
+    res = send_batch(
+        conn,
+        seeded.sender_account_id,
+        transport,
+        clock,
+        custom_settings,
+        sleep=sleep_calls.append,
+    )
+    assert res.sent == 2
+    assert sleep_calls == [5.0]
+
+
+def test_withdrawal_during_precheck_is_skipped_not_an_error(conn, clock, settings):
+    seeded = seed(conn, clock, n_recipients=1)
+    outreach_ids = approve_all(conn, clock, seeded)
+    oid = outreach_ids[0]
+
+    class WithdrawingTransport:
+        def check_recipient(self, sender_account_id: int, recipient_x_user_id: str):
+            cancel_approval(conn, oid, iso(clock.now()))
+            return Reachability(can_dm=False)
+
+        def send_dm(self, sender_account_id: int, recipient_x_user_id: str, text: str):
+            return SendOutcome("sent")
+
+    transport = WithdrawingTransport()
+    res = send_one(
+        conn,
+        oid,
+        transport,
+        clock,
+        settings.daily_send_cap,
+        settings.timezone,
+    )
+    assert res == "skipped"
+
+    cur = conn.execute("SELECT state FROM outreach WHERE id = ?", (oid,))
+    row = cur.fetchone()
+    assert row["state"] == "cancelled"
+
+
