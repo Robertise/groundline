@@ -602,3 +602,157 @@ def test_segment_evidence_is_not_inserted_into_evidence_table(disc_setup):
     bio_post_cur = conn.execute("SELECT COUNT(*) as bp_count FROM evidence WHERE source IN ('bio', 'post')")
     assert bio_post_cur.fetchone()["bp_count"] > 0
 
+
+def test_tier1_mismatch_is_filtered_before_deep_profile(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn, cost_context={"campaign_id": 1})
+    llm = FakeLLM()
+
+    run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+
+    cur = conn.execute(
+        """
+        SELECT p.id, p.x_user_id, p.state, p.state_reason
+        FROM prospects p
+        JOIN x_users u ON p.x_user_id = u.x_user_id
+        WHERE p.campaign_id = 1 AND u.username = 'demo_ai_app_builder_us'
+        """
+    )
+    row = cur.fetchone()
+    assert row is not None
+    assert row["state"] == "filtered_out"
+    assert row["state_reason"] == "outside_segment"
+
+    # Audit log has discovered -> filtered_out with reason outside_segment and no row into scored
+    audit_rows = conn.execute(
+        "SELECT from_state, to_state, reason FROM audit_log WHERE entity = 'prospect' AND entity_id = ? ORDER BY id ASC",
+        (row["id"],),
+    ).fetchall()
+    assert any(
+        r["from_state"] == "discovered"
+        and r["to_state"] == "filtered_out"
+        and r["reason"] == "outside_segment"
+        for r in audit_rows
+    )
+    assert not any(r["to_state"] == "scored" for r in audit_rows)
+
+    # Ledger has no row whose detail is tier2_score:<that x_user_id>
+    uid = row["x_user_id"]
+    ledger_row = conn.execute(
+        "SELECT 1 FROM ledger WHERE campaign_id = 1 AND detail = ?",
+        (f"tier2_score:{uid}",),
+    ).fetchone()
+    assert ledger_row is None
+
+
+def test_tier1_unverified_mismatch_is_not_filtered(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn, cost_context={"campaign_id": 1})
+
+    class UnverifiedMismatchLLM(FakeLLM):
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            res = super().call_tool(system, user, tool_name, tool_schema, max_tokens)
+            if "Profiles (JSON):" in user:
+                data = dict(res.data)
+                results = [dict(r) for r in data.get("results", [])]
+                for r in results:
+                    if r.get("x_user_id") == "9100000000000000101":
+                        r["segment_match"] = "mismatch"
+                        r["segment_quote"] = "Berlin, Germany"
+                data["results"] = results
+                return LLMResult(data=data, input_tokens=res.input_tokens, output_tokens=res.output_tokens)
+            return res
+
+    run_discovery(conn, 1, reader, UnverifiedMismatchLLM(), settings, clock, simulated=True)
+
+    cur = conn.execute(
+        """
+        SELECT p.state, p.score
+        FROM prospects p
+        JOIN x_users u ON p.x_user_id = u.x_user_id
+        WHERE p.campaign_id = 1 AND u.username = 'demo_robotics_founder_sg'
+        """
+    )
+    row = cur.fetchone()
+    assert row is not None
+    assert row["state"] == "scored"
+
+
+def test_tier1_failed_screen_keeps_its_reason_on_mismatch(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn, cost_context={"campaign_id": 1})
+
+    class FailedScreenMismatchLLM(FakeLLM):
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            res = super().call_tool(system, user, tool_name, tool_schema, max_tokens)
+            if "Profiles (JSON):" in user:
+                data = dict(res.data)
+                results = [dict(r) for r in data.get("results", [])]
+                for r in results:
+                    if r.get("x_user_id") == "9100000000000000108":
+                        r["pass"] = False
+                        r["reason"] = "not ai work"
+                data["results"] = results
+                return LLMResult(data=data, input_tokens=res.input_tokens, output_tokens=res.output_tokens)
+            return res
+
+    run_discovery(conn, 1, reader, FailedScreenMismatchLLM(), settings, clock, simulated=True)
+
+    cur = conn.execute(
+        """
+        SELECT p.state, p.state_reason
+        FROM prospects p
+        JOIN x_users u ON p.x_user_id = u.x_user_id
+        WHERE p.campaign_id = 1 AND u.username = 'demo_ai_app_builder_us'
+        """
+    )
+    row = cur.fetchone()
+    assert row is not None
+    assert row["state"] == "filtered_out"
+    assert row["state_reason"] == "bio_screen_failed"
+
+
+def test_tier2_still_filters_mismatch_when_tier1_is_unknown(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn, cost_context={"campaign_id": 1})
+
+    class Tier1UnknownLLM(FakeLLM):
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            res = super().call_tool(system, user, tool_name, tool_schema, max_tokens)
+            if "Profiles (JSON):" in user:
+                data = dict(res.data)
+                results = [dict(r) for r in data.get("results", [])]
+                for r in results:
+                    r["segment_match"] = "unknown"
+                    r["segment_quote"] = ""
+                data["results"] = results
+                return LLMResult(data=data, input_tokens=res.input_tokens, output_tokens=res.output_tokens)
+            return res
+
+    run_discovery(conn, 1, reader, Tier1UnknownLLM(), settings, clock, simulated=True)
+
+    cur = conn.execute(
+        """
+        SELECT p.id, p.state, p.state_reason
+        FROM prospects p
+        JOIN x_users u ON p.x_user_id = u.x_user_id
+        WHERE p.campaign_id = 1 AND u.username = 'demo_ai_app_builder_us'
+        """
+    )
+    row = cur.fetchone()
+    assert row is not None
+    assert row["state"] == "filtered_out"
+    assert row["state_reason"] == "outside_segment"
+
+    # Audit log has a scored -> filtered_out row for it
+    audit_rows = conn.execute(
+        "SELECT from_state, to_state, reason FROM audit_log WHERE entity = 'prospect' AND entity_id = ? ORDER BY id ASC",
+        (row["id"],),
+    ).fetchall()
+    assert any(
+        r["from_state"] == "scored"
+        and r["to_state"] == "filtered_out"
+        and r["reason"] == "outside_segment"
+        for r in audit_rows
+    )
+

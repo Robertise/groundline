@@ -359,7 +359,34 @@ def run_discovery(
                 if not res:
                     continue
                 if res["pass"]:
-                    passed_tier1.append((r["id"], r["x_user_id"], res))
+                    if res.get("segment_status") == "mismatch" and res.get("segment_evidence"):
+                        t1_seg_fit_reasons = json.dumps(
+                            {
+                                "tier1": {
+                                    "pass": True,
+                                    "reason": res.get("reason", ""),
+                                    "quote": res.get("quote", ""),
+                                },
+                                "segment_status": "mismatch",
+                                "segment_evidence": res["segment_evidence"],
+                            },
+                            ensure_ascii=False,
+                        )
+                        with db.transaction(conn):
+                            transition(
+                                conn,
+                                "prospect",
+                                r["id"],
+                                "discovered",
+                                "filtered_out",
+                                "system",
+                                iso(clock.now()),
+                                reason="outside_segment",
+                                fit_reasons=t1_seg_fit_reasons,
+                            )
+                        counts.filtered["outside_segment"] = counts.filtered.get("outside_segment", 0) + 1
+                    else:
+                        passed_tier1.append((r["id"], r["x_user_id"], res))
                 else:
                     fail_reason = (
                         "unsupported_quote"
