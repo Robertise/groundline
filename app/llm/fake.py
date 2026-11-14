@@ -70,7 +70,128 @@ class FakeLLM:
         input_tokens = len(system + user) // 4
         output_tokens = 200
 
-        if "Profiles (JSON):" in user:
+        if tool_name == "draft_dm":
+            idx = user.find("Input (JSON):\n")
+            if idx != -1:
+                d_data = json.loads(user[idx + len("Input (JSON):\n") :])
+            else:
+                d_data = json.loads(user)
+
+            ev_list = d_data.get("evidence", [])
+            if not ev_list:
+                return LLMResult(
+                    data={
+                        "decision": "insufficient",
+                        "reason": "No evidence items available to reference.",
+                        "message": "",
+                        "claims": [],
+                    },
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+
+            ev0 = ev_list[0]
+            ev_text = ev0.get("text", "")
+            words = ev_text.split()[:12]
+            embedded = " ".join(words)
+
+            recipient = d_data.get("recipient", {})
+            uname = recipient.get("username", "")
+            name = recipient.get("name") or uname
+
+            v = sum(map(ord, uname)) % 3
+            openers = [
+                f"I was reading your note mentioning {embedded}.",
+                f"I noticed your recent update discussing {embedded}.",
+                f"I came across your post about {embedded}.",
+            ]
+            closers = [
+                "No worries at all if the timing is not right.",
+                "Completely understand if your schedule is too full right now.",
+                "No pressure either way if you are focused on other priorities.",
+            ]
+            questions = [
+                f"Would you be open to a brief chat about what you are currently building, {name}?",
+                f"Are you open to connecting with our team for a quick technical exchange, {name}?",
+                f"Could we set up a quick 10-minute call to compare notes on these systems, {name}?",
+                f"Would you have time for a short informal discussion on your latest projects, {name}?",
+                f"Would you be open to a brief introductory conversation sometime next week, {name}?",
+                f"Might you be interested in a short discussion about your recent technical work, {name}?",
+                f"Are you available for a brief call to share thoughts on these developments, {name}?",
+                f"Could we arrange a short introductory conversation regarding your engineering directions, {name}?",
+                f"Would you be open to a brief exchange about your current technical priorities, {name}?",
+                f"Might we schedule a 10-minute introductory sync about these engineering challenges, {name}?",
+                f"Could we set up a short conversation to hear more about your work in this space, {name}?",
+                f"Would you have ten minutes for a brief introductory call with our group, {name}?",
+                f"Are you open to having a brief introductory chat about your systems architecture, {name}?",
+            ]
+
+            team_brief = d_data.get("team_brief", "")
+            first_sent = team_brief.split(".")[0].strip() if team_brief else ""
+            if not first_sent:
+                first_sent = "We are an engineering team developing evaluation benchmarks and open tools for embodied AI agents in Southeast Asia"
+            if len(first_sent) > 140:
+                first_sent = first_sent[:137] + "..."
+            first_sent = first_sent.rstrip(".") + "."
+
+            q_idx = sum(ord(c) * (pos + 1) for pos, c in enumerate(uname)) % len(questions)
+            opener = openers[v]
+            closer = closers[v]
+            q = questions[q_idx]
+
+            msg = f"{opener} {first_sent} {q} {closer}"
+            if len(msg) < 300:
+                connector = "We are always keen to connect with other builders exploring similar technical challenges."
+                msg = f"{opener} {first_sent} {connector} {q} {closer}"
+            if len(msg) > 500:
+                # trim
+                msg = msg[:496].rsplit(" ", 1)[0] + "."
+
+            claims = [{"text": embedded, "evidence_id": ev0.get("id", "E1")}]
+            return LLMResult(
+                data={
+                    "decision": "draft",
+                    "reason": "Profile has specific engineering evidence.",
+                    "message": msg,
+                    "claims": claims,
+                },
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
+        elif tool_name == "judge_draft":
+            idx = user.find("Input (JSON):\n")
+            if idx != -1:
+                j_data = json.loads(user[idx + len("Input (JSON):\n") :])
+            else:
+                j_data = json.loads(user)
+            draft_text = j_data.get("draft", "")
+            raw_sentences = [
+                s.strip()
+                for s in re.split(r"(?<=[.!?])\s+", draft_text)
+                if s.strip()
+            ]
+            sentences = [
+                {
+                    "text": s,
+                    "about_recipient": False,
+                    "supported": True,
+                    "evidence_id": None,
+                }
+                for s in raw_sentences
+            ]
+            return LLMResult(
+                data={
+                    "sentences": sentences,
+                    "fake_familiarity": False,
+                    "has_soft_opt_out": True,
+                    "sensitive_trait": False,
+                },
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
+        elif "Profiles (JSON):" in user:
             # Tier 1 screening
             idx = user.find("Profiles (JSON):\n")
             json_str = user[idx + len("Profiles (JSON):\n") :]
