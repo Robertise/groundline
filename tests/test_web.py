@@ -400,3 +400,81 @@ def test_run_errors_are_listed_and_escaped(tmp_path, monkeypatch):
         assert "<script>" not in resp.text
         assert "<output>" not in resp.text
 
+
+def test_segment_status_and_outside_segment_reason_are_shown(tmp_path, monkeypatch):
+    import json
+    from app.db import init_db
+
+    db_file = tmp_path / "web_segment.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    conn = connect(str(db_file))
+    init_db(conn)
+    now_str = "2026-11-14T10:00:00+00:00"
+
+    with db.transaction(conn):
+        conn.execute(
+            "INSERT INTO sender_accounts (id, x_user_id, username, daily_send_cap, created_at) "
+            "VALUES (1, 's1', 'sender_me', 20, ?)",
+            (now_str,),
+        )
+        conn.execute(
+            "INSERT INTO campaigns (id, sender_account_id, name, segment, budget_usd, created_at) "
+            "VALUES (1, 1, 'Segment Camp', 'AI in SEA', 10.0, ?)",
+            (now_str,),
+        )
+        # User 1: scored with match
+        conn.execute(
+            "INSERT INTO x_users (x_user_id, username, name, bio, fetched_at) "
+            "VALUES ('u1', 'sg_person', 'SG Person', 'Bio text', ?)",
+            (now_str,),
+        )
+        fit_reasons_1 = {
+            "why_fit": ["Matches SEA"],
+            "segment_status": "match",
+            "segment_evidence": [{"source": "location", "quote": "Singapore"}],
+        }
+        conn.execute(
+            "INSERT INTO prospects (id, campaign_id, x_user_id, state, score, role, segment, fit_reasons, created_at, updated_at) "
+            "VALUES (1, 1, 'u1', 'scored', 85, 'builder', 'robotics', ?, ?, ?)",
+            (json.dumps(fit_reasons_1), now_str, now_str),
+        )
+
+        # User 2: filtered with outside_segment and mismatch with special chars to test escaping
+        conn.execute(
+            "INSERT INTO x_users (x_user_id, username, name, bio, fetched_at) "
+            "VALUES ('u2', 'us_person', 'US Person', 'Bio text', ?)",
+            (now_str,),
+        )
+        fit_reasons_2 = {
+            "why_fit": ["Matches domain but outside SEA"],
+            "segment_status": "mismatch",
+            "segment_evidence": [{"source": "location", "quote": "<script>alert('xss')</script> San Francisco, CA"}],
+        }
+        conn.execute(
+            "INSERT INTO prospects (id, campaign_id, x_user_id, state, state_reason, score, role, segment, fit_reasons, created_at, updated_at) "
+            "VALUES (2, 1, 'u2', 'filtered_out', 'outside_segment', 85, 'builder', 'applications', ?, ?, ?)",
+            (json.dumps(fit_reasons_2), now_str, now_str),
+        )
+        conn.execute(
+            "INSERT INTO audit_log (entity, entity_id, from_state, to_state, actor, reason, created_at) "
+            "VALUES ('prospect', 2, 'scored', 'filtered_out', 'system', 'outside_segment', ?)",
+            (now_str,),
+        )
+    conn.close()
+
+    with TestClient(app) as client:
+        # Check scored view shows Segment: match (Singapore)
+        scored_resp = client.get("/campaigns/1?view=scored")
+        assert scored_resp.status_code == 200
+        assert "Segment: match (Singapore)" in scored_resp.text
+
+        # Check filtered view shows Outside the target segment and escaped quote
+        filtered_resp = client.get("/campaigns/1?view=filtered")
+        assert filtered_resp.status_code == 200
+        assert "Outside the target segment" in filtered_resp.text
+        assert "Segment: mismatch" in filtered_resp.text
+        assert "<script>alert('xss')</script>" not in filtered_resp.text
+        assert "&lt;script&gt;alert(" in filtered_resp.text
+

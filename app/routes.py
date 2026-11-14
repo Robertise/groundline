@@ -29,6 +29,7 @@ PLAIN_REASONS = {
     "unsupported_quote": "AI's evidence could not be found in the profile",
     "inactive": "No original posts in the last 60 days",
     "low_score": "Score below the campaign minimum",
+    "outside_segment": "Outside the target segment",
 }
 
 

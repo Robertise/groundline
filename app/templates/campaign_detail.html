@@ -117,6 +117,9 @@
         <td>
           <strong>{{ p.role or "-" }}</strong>
           <br><small>{{ p.segment or "" }}</small>
+          {% if p.fit_reasons and p.fit_reasons.segment_status %}
+            <br><small style="color: #6b7280;">Segment: {{ p.fit_reasons.segment_status }}{% if p.fit_reasons.segment_evidence and p.fit_reasons.segment_evidence[0].quote %} ({{ p.fit_reasons.segment_evidence[0].quote[:80] }}){% endif %}</small>
+          {% endif %}
         </td>
         <td style="max-width: 220px; font-size: 13px;">
           {% for line in p.why_fit_lines %}

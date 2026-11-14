@@ -8,7 +8,7 @@ from app.db import connect, init_db
 from app.discovery import run_discovery
 from app.llm.base import LLMResult
 from app.llm.fake import FakeLLM
-from app.x.base import XRateLimited
+from app.x.base import XUser, XPost, XRateLimited
 from app.x.fixtures import FixtureReader
 
 
@@ -488,4 +488,117 @@ def test_audit_timestamps_advance_during_run(disc_setup):
     timestamps = [r["created_at"] for r in cur.fetchall()]
     assert len(timestamps) > 1
     assert len(set(timestamps)) > 1
+
+
+def test_us_based_builder_is_filtered_outside_segment(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn, cost_context={"campaign_id": 1})
+    llm = FakeLLM()
+
+    run_id = run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+    assert run_id > 0
+
+    cur = conn.execute(
+        """
+        SELECT p.id, p.state, p.score, p.fit_reasons
+        FROM prospects p
+        JOIN x_users u ON p.x_user_id = u.x_user_id
+        WHERE p.campaign_id = 1 AND u.username = 'demo_ai_app_builder_us'
+        """
+    )
+    row = cur.fetchone()
+    assert row is not None
+    assert row["state"] == "filtered_out"
+    fit_reasons = json.loads(row["fit_reasons"])
+    assert fit_reasons["segment_status"] == "mismatch"
+    assert len(fit_reasons["segment_evidence"]) == 1
+    assert fit_reasons["segment_evidence"][0]["source"] == "location"
+    assert "San Francisco" in fit_reasons["segment_evidence"][0]["quote"]
+
+    # Check audit log for outside_segment reason
+    audit_cur = conn.execute(
+        "SELECT reason FROM audit_log WHERE entity = 'prospect' AND entity_id = ? ORDER BY id DESC LIMIT 1",
+        (row["id"],),
+    )
+    audit_row = audit_cur.fetchone()
+    assert audit_row["reason"] == "outside_segment"
+
+    # Check run counts
+    run_cur = conn.execute("SELECT counts FROM discovery_runs WHERE id = ?", (run_id,))
+    counts = json.loads(run_cur.fetchone()["counts"])
+    assert counts["filtered"].get("outside_segment", 0) >= 1
+
+
+def test_builder_without_location_is_kept_with_unknown_segment(disc_setup):
+    conn, settings, clock = disc_setup
+
+    class NoLocationReader(FixtureReader):
+        def search_recent(self, query, max_results=20):
+            posts, authors = super().search_recent(query, max_results)
+            u = XUser(
+                id="999001",
+                username="nolocation_builder",
+                name="Global Builder",
+                bio="AI builder working on autonomous robotics and foundation models.",
+                protected=False,
+                location="",
+                followers_count=1000,
+                receives_your_dm=True,
+            )
+            p = XPost(
+                id="p999",
+                author_id="999001",
+                text="Shipped new open weights robot control models.",
+                created_at="2026-11-10T00:00:00Z",
+            )
+            return posts + [p], authors + [u]
+
+        def user_posts(self, user_id, max_results=10):
+            if user_id == "999001":
+                return [
+                    XPost(
+                        id="p999",
+                        author_id=user_id,
+                        text="Shipped new open weights robot control models.",
+                        created_at="2026-11-10T00:00:00Z",
+                    )
+                ]
+            return super().user_posts(user_id, max_results)
+
+    reader = NoLocationReader(settings.fixtures_path, clock, conn=conn, cost_context={"campaign_id": 1})
+    llm = FakeLLM()
+
+    run_id = run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+    assert run_id > 0
+
+    cur = conn.execute(
+        """
+        SELECT p.state, p.state_reason, p.score, p.fit_reasons
+        FROM prospects p
+        JOIN x_users u ON p.x_user_id = u.x_user_id
+        WHERE p.campaign_id = 1 AND u.username = 'nolocation_builder'
+        """
+    )
+    row = cur.fetchone()
+    assert row is not None
+    assert row["state"] == "scored"
+    fit_reasons = json.loads(row["fit_reasons"])
+    assert fit_reasons["segment_status"] == "unknown"
+    assert fit_reasons["segment_evidence"] == []
+
+
+def test_segment_evidence_is_not_inserted_into_evidence_table(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn, cost_context={"campaign_id": 1})
+    llm = FakeLLM()
+
+    run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+
+    # In evidence table, no row has source == 'location'
+    cur = conn.execute("SELECT COUNT(*) as loc_count FROM evidence WHERE source = 'location'")
+    assert cur.fetchone()["loc_count"] == 0
+
+    # Ensure evidence table still has post and bio evidence rows
+    bio_post_cur = conn.execute("SELECT COUNT(*) as bp_count FROM evidence WHERE source IN ('bio', 'post')")
+    assert bio_post_cur.fetchone()["bp_count"] > 0
 

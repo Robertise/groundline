@@ -546,6 +546,8 @@ def run_discovery(
                         "reason": t1_res.get("reason", ""),
                         "quote": t1_res.get("quote", ""),
                     },
+                    "segment_status": score_res.get("segment_status", "unknown"),
+                    "segment_evidence": score_res.get("segment_evidence", []),
                 },
                 ensure_ascii=False,
             )
@@ -566,7 +568,22 @@ def run_discovery(
                 )
             counts.scored += 1
 
-            if score_res["score"] < campaign["min_score"]:
+            if score_res.get("segment_status") == "mismatch":
+                with db.transaction(conn):
+                    transition(
+                        conn,
+                        "prospect",
+                        pid,
+                        "scored",
+                        "filtered_out",
+                        "system",
+                        iso(clock.now()),
+                        reason="outside_segment",
+                    )
+                counts.filtered["outside_segment"] = (
+                    counts.filtered.get("outside_segment", 0) + 1
+                )
+            elif score_res["score"] < campaign["min_score"]:
                 with db.transaction(conn):
                     transition(
                         conn,
