@@ -5,7 +5,7 @@ from app.config import get_settings
 from app.clock import SystemClock
 from app.db import connect, init_db
 from app.sender import recover_on_startup
-from app import routes, routes_auth
+from app import routes, routes_auth, routes_outreach
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(routes.router)
 app.include_router(routes_auth.router)
+app.include_router(routes_outreach.router)
 
 
 @app.get("/health")
