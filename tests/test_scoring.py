@@ -36,8 +36,8 @@ def test_criterion_without_surviving_evidence_is_not_met():
                         {"name": "role", "met": True, "evidence": [{"source": "bio", "quote": "completely invented quote not in bio"}]},
                         {"name": "domain", "met": True, "evidence": [{"source": "bio", "quote": "robotics perception systems"}]},
                         {"name": "individual", "met": True, "evidence": []},
-                        {"name": "campaign_fit", "met": False, "evidence": []},
                     ],
+                    "segment_match": {"status": "unknown", "evidence": []},
                     "role": "builder",
                     "segment": "robotics",
                     "why_fit": ["Matches domain."],
@@ -163,11 +163,6 @@ def test_criteria_returned_as_json_string_is_parsed():
                     "met": True,
                     "evidence": [{"source": "bio", "quote": "building open source robotics"}],
                 },
-                {
-                    "name": "campaign_fit",
-                    "met": True,
-                    "evidence": [{"source": "bio", "quote": "building open source robotics"}],
-                },
             ]
             return LLMResult(
                 data={
@@ -231,3 +226,207 @@ def test_invalid_enum_values_fall_back_to_other():
     assert res["role"] == "other"
     assert res["segment"] == "other"
     assert res["caution"] is None
+
+
+def test_segment_match_with_evidence_adds_campaign_fit_points():
+    class MatchLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "criteria": [
+                        {"name": "role", "met": True, "evidence": [{"source": "bio", "quote": "AI engineer working on robotics"}]},
+                        {"name": "domain", "met": True, "evidence": [{"source": "bio", "quote": "robotics and autonomous systems"}]},
+                        {"name": "individual", "met": True, "evidence": [{"source": "bio", "quote": "AI engineer working on robotics"}]},
+                    ],
+                    "segment_match": {
+                        "status": "match",
+                        "evidence": [{"source": "location", "quote": "Singapore"}],
+                    },
+                    "role": "builder",
+                    "segment": "robotics",
+                    "why_fit": ["Builds robotics in Singapore."],
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    now = datetime(2026, 11, 14, 0, 0, 0, tzinfo=timezone.utc)
+    user = XUser(id="u1", username="sg_builder", bio="AI engineer working on robotics and autonomous systems in Singapore", location="Singapore")
+    posts = [XPost(id="p1", author_id="u1", text="Latest robotics release.", created_at="2026-11-10T00:00:00Z")]
+    res, _ = score_user(MatchLLM(), "robotics in Singapore", user, posts, now)
+
+    assert res["segment_status"] == "match"
+    assert len(res["segment_evidence"]) == 1
+    assert res["segment_evidence"][0]["source"] == "location"
+    assert res["segment_evidence"][0]["quote"] == "Singapore"
+    assert res["criteria"]["campaign_fit"]["met"] is True
+    # role(25) + domain(30) + individual(15) + active(15) + campaign_fit(15) = 100
+    assert res["score"] == 100
+
+
+def test_segment_match_without_surviving_evidence_is_unknown():
+    class FakeMatchLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "criteria": [
+                        {"name": "role", "met": True, "evidence": [{"source": "bio", "quote": "AI engineer"}]},
+                    ],
+                    "segment_match": {
+                        "status": "match",
+                        "evidence": [{"source": "location", "quote": "Bangkok"}],
+                    },
+                    "role": "builder",
+                    "segment": "robotics",
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    now = datetime(2026, 11, 14, 0, 0, 0, tzinfo=timezone.utc)
+    user = XUser(id="u1", username="test_user", bio="AI engineer", location="Singapore")
+    res, _ = score_user(FakeMatchLLM(), "robotics in Bangkok", user, [], now)
+
+    assert res["segment_status"] == "unknown"
+    assert res["segment_evidence"] == []
+    assert res["criteria"]["campaign_fit"]["met"] is False
+
+
+def test_segment_mismatch_with_location_evidence_sets_status_mismatch():
+    class MismatchLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "criteria": [
+                        {"name": "role", "met": True, "evidence": [{"source": "bio", "quote": "AI engineer in SF"}]},
+                    ],
+                    "segment_match": {
+                        "status": "mismatch",
+                        "evidence": [{"source": "location", "quote": "San Francisco, CA"}],
+                    },
+                    "role": "builder",
+                    "segment": "robotics",
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    now = datetime(2026, 11, 14, 0, 0, 0, tzinfo=timezone.utc)
+    user = XUser(id="u1", username="sf_builder", bio="AI engineer in SF", location="San Francisco, CA")
+    res, _ = score_user(MismatchLLM(), "robotics in SEA", user, [], now)
+
+    assert res["segment_status"] == "mismatch"
+    assert len(res["segment_evidence"]) == 1
+    assert res["segment_evidence"][0]["quote"] == "San Francisco, CA"
+    assert res["criteria"]["campaign_fit"]["met"] is False
+
+
+def test_segment_mismatch_without_evidence_is_unknown():
+    class HallucinatedMismatchLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "criteria": [
+                        {"name": "role", "met": True, "evidence": [{"source": "bio", "quote": "AI engineer"}]},
+                    ],
+                    "segment_match": {
+                        "status": "mismatch",
+                        "evidence": [{"source": "location", "quote": "London, UK"}],
+                    },
+                    "role": "builder",
+                    "segment": "robotics",
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    now = datetime(2026, 11, 14, 0, 0, 0, tzinfo=timezone.utc)
+    user = XUser(id="u1", username="mysterious_builder", bio="AI engineer", location="Tokyo")
+    res, _ = score_user(HallucinatedMismatchLLM(), "robotics in SEA", user, [], now)
+
+    assert res["segment_status"] == "unknown"
+    assert res["segment_evidence"] == []
+    assert res["criteria"]["campaign_fit"]["met"] is False
+
+
+def test_missing_segment_match_defaults_to_unknown_without_error():
+    class NoSegmentMatchLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "criteria": [
+                        {"name": "role", "met": True, "evidence": [{"source": "bio", "quote": "AI engineer"}]},
+                    ],
+                    "role": "builder",
+                    "segment": "robotics",
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    now = datetime(2026, 11, 14, 0, 0, 0, tzinfo=timezone.utc)
+    user = XUser(id="u1", username="test_u", bio="AI engineer", location="Singapore")
+    res, _ = score_user(NoSegmentMatchLLM(), "robotics in SEA", user, [], now)
+
+    assert res["segment_status"] == "unknown"
+    assert res["segment_evidence"] == []
+    assert res.get("segment_match_missing") is True
+    assert res["criteria"]["campaign_fit"]["met"] is False
+
+
+def test_segment_match_given_as_json_string_is_parsed():
+    class StringSegmentMatchLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "criteria": [
+                        {"name": "role", "met": True, "evidence": [{"source": "bio", "quote": "AI engineer"}]},
+                    ],
+                    "segment_match": json.dumps({
+                        "status": "match",
+                        "evidence": [{"source": "location", "quote": "Singapore"}],
+                    }),
+                    "role": "builder",
+                    "segment": "robotics",
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    now = datetime(2026, 11, 14, 0, 0, 0, tzinfo=timezone.utc)
+    user = XUser(id="u1", username="test_u", bio="AI engineer", location="Singapore")
+    res, _ = score_user(StringSegmentMatchLLM(), "robotics in SEA", user, [], now)
+
+    assert res["segment_status"] == "match"
+    assert len(res["segment_evidence"]) == 1
+    assert res["segment_evidence"][0]["quote"] == "Singapore"
+    assert res["criteria"]["campaign_fit"]["met"] is True
+
+
+def test_campaign_fit_criterion_from_model_is_ignored():
+    class ExtraCritLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "criteria": [
+                        {"name": "role", "met": True, "evidence": [{"source": "bio", "quote": "AI engineer"}]},
+                        {"name": "campaign_fit", "met": True, "evidence": [{"source": "bio", "quote": "AI engineer"}]},
+                    ],
+                    "segment_match": {
+                        "status": "unknown",
+                        "evidence": [],
+                    },
+                    "role": "builder",
+                    "segment": "robotics",
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    now = datetime(2026, 11, 14, 0, 0, 0, tzinfo=timezone.utc)
+    user = XUser(id="u1", username="test_u", bio="AI engineer", location="Singapore")
+    res, _ = score_user(ExtraCritLLM(), "robotics in SEA", user, [], now)
+
+    assert res["segment_status"] == "unknown"
+    assert res["criteria"]["campaign_fit"]["met"] is False
+    assert res["criteria"]["campaign_fit"]["evidence"] == []

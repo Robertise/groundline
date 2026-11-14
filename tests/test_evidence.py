@@ -50,3 +50,33 @@ def test_post_evidence_must_reference_the_users_own_post():
     assert valid[1]["source"] == "post"
     assert valid[1]["post_id"] == "p101"
     assert valid[1]["url"] == "https://x.com/demo_user/status/p101"
+
+
+def test_location_evidence_must_match_location_field():
+    items = [
+        {"source": "location", "quote": "Singapore"},
+        {"source": "location", "quote": "San Francisco, CA"},
+        {"source": "location", "quote": "SF"},
+    ]
+    valid = validate_evidence(
+        items,
+        bio="Software builder",
+        posts_by_id={},
+        author_id="u1",
+        username="@builder_sg",
+        location="Singapore",
+    )
+    assert len(valid) == 1
+    assert valid[0]["source"] == "location"
+    assert valid[0]["quote"] == "Singapore"
+    assert valid[0]["url"] == "https://x.com/builder_sg"
+
+    valid_empty = validate_evidence(
+        [{"source": "location", "quote": "Singapore"}],
+        bio="Software builder",
+        posts_by_id={},
+        author_id="u1",
+        username="builder_sg",
+        location="",
+    )
+    assert len(valid_empty) == 0

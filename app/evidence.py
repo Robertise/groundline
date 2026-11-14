@@ -41,6 +41,7 @@ def validate_evidence(
     posts_by_id: dict[str, XPost],
     author_id: str,
     username: str,
+    location: str = "",
 ) -> list[dict]:
     clean_username = username.lstrip("@")
     valid_items = []
@@ -65,5 +66,10 @@ def validate_evidence(
                     res["post_id"] = str(post_id)
                     res["url"] = f"https://x.com/{clean_username}/status/{post_id}"
                     valid_items.append(res)
+        elif source == "location":
+            if location and quote_is_supported(quote, location, min_len=3):
+                res = dict(it)
+                res["url"] = f"https://x.com/{clean_username}"
+                valid_items.append(res)
 
     return valid_items

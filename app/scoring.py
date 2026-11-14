@@ -31,7 +31,7 @@ ALLOWED_SEGMENTS = {
     "embodied_ai",
     "other",
 }
-ALLOWED_CRITERIA_NAMES = {"role", "domain", "individual", "campaign_fit"}
+ALLOWED_CRITERIA_NAMES = {"role", "domain", "individual"}
 
 
 def compute_score(criteria: dict[str, bool]) -> int:
@@ -179,7 +179,11 @@ def score_user(
             raw=str(raw_data)[:2000],
         )
 
-    data = coerce_json_fields(raw_data, list_fields=("criteria", "why_fit"))
+    data = coerce_json_fields(
+        raw_data,
+        list_fields=("criteria", "why_fit"),
+        dict_fields=("segment_match",),
+    )
     raw_criteria = data.get("criteria")
     if not isinstance(raw_criteria, list):
         raise LLMOutputError(
@@ -190,6 +194,54 @@ def score_user(
         )
 
     posts_by_id = {str(p.id): p for p in posts}
+
+    # Process segment_match
+    raw_sm = data.get("segment_match")
+    segment_match_missing = False
+    segment_status = "unknown"
+    segment_evidence = []
+
+    if isinstance(raw_sm, dict):
+        sm = coerce_json_fields(raw_sm, list_fields=("evidence",))
+        raw_status = sm.get("status")
+        raw_ev = sm.get("evidence")
+        if raw_status in ("match", "mismatch", "unknown") and isinstance(raw_ev, list):
+            valid_ev_list = []
+            for ev in raw_ev:
+                if (
+                    isinstance(ev, dict)
+                    and isinstance(ev.get("source"), str)
+                    and isinstance(ev.get("quote"), str)
+                ):
+                    valid_ev_list.append(ev)
+            surviving_sm_ev = validate_evidence(
+                valid_ev_list,
+                bio=user.bio,
+                posts_by_id=posts_by_id,
+                author_id=user.id,
+                username=user.username,
+                location=user.location or "",
+            )
+            has_surviving = len(surviving_sm_ev) > 0
+            if raw_status == "match":
+                if has_surviving:
+                    segment_status = "match"
+                    segment_evidence = surviving_sm_ev
+                else:
+                    segment_status = "unknown"
+            elif raw_status == "mismatch":
+                if has_surviving:
+                    segment_status = "mismatch"
+                    segment_evidence = surviving_sm_ev
+                else:
+                    segment_status = "unknown"
+            elif raw_status == "unknown":
+                segment_status = "unknown"
+                segment_evidence = surviving_sm_ev
+        else:
+            segment_match_missing = True
+    else:
+        segment_match_missing = True
 
     criteria_dict = {}
     valid_crit_count = 0
@@ -269,6 +321,11 @@ def score_user(
         "evidence": active_evidence,
     }
 
+    criteria_dict["campaign_fit"] = {
+        "met": (segment_status == "match"),
+        "evidence": [],
+    }
+
     # Ensure all expected criteria are present
     for req_crit in ["role", "domain", "individual", "campaign_fit"]:
         if req_crit not in criteria_dict:
@@ -299,9 +356,13 @@ def score_user(
     result = {
         "score": score,
         "criteria": criteria_dict,
+        "segment_status": segment_status,
+        "segment_evidence": segment_evidence,
         "role": role,
         "segment": segment_val,
         "why_fit": why_fit,
         "caution": caution,
     }
+    if segment_match_missing:
+        result["segment_match_missing"] = True
     return result, llm_res

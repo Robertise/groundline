@@ -166,19 +166,42 @@ class FakeLLM:
                 indiv_ev.append({"source": "bio", "quote": bio.split(".")[0].strip()})
             criteria.append({"name": "individual", "met": indiv_met, "evidence": indiv_ev[:2]})
 
-            # 4. Campaign Fit
-            fit_met = any(kw in all_text for kw in SEA_LOCATIONS)
-            fit_ev = []
-            if fit_met:
-                quote = _find_sentence_with_keyword(bio, SEA_LOCATIONS)
-                if quote:
-                    fit_ev.append({"source": "bio", "quote": quote})
-                elif posts:
-                    for p in posts:
-                        if any(kw in p.get("text", "").lower() for kw in SEA_LOCATIONS):
-                            fit_ev.append({"source": "post", "post_id": str(p["post_id"]), "quote": _find_sentence_with_keyword(p.get("text", ""), SEA_LOCATIONS)})
+            # Segment match
+            loc_lower = loc.lower() if loc else ""
+            if loc and any(kw in loc_lower for kw in SEA_LOCATIONS):
+                segment_match = {
+                    "status": "match",
+                    "evidence": [{"source": "location", "quote": loc.strip()}],
+                }
+            else:
+                post_match = None
+                for p in posts:
+                    if any(kw in p.get("text", "").lower() for kw in SEA_LOCATIONS):
+                        quote = _find_sentence_with_keyword(p.get("text", ""), SEA_LOCATIONS)
+                        if quote:
+                            post_match = (str(p["post_id"]), quote)
                             break
-            criteria.append({"name": "campaign_fit", "met": fit_met, "evidence": fit_ev[:2]})
+                if post_match:
+                    segment_match = {
+                        "status": "match",
+                        "evidence": [
+                            {
+                                "source": "post",
+                                "post_id": post_match[0],
+                                "quote": post_match[1],
+                            }
+                        ],
+                    }
+                elif loc and loc.strip():
+                    segment_match = {
+                        "status": "mismatch",
+                        "evidence": [{"source": "location", "quote": loc.strip()}],
+                    }
+                else:
+                    segment_match = {
+                        "status": "unknown",
+                        "evidence": [],
+                    }
 
             # Decide role & segment
             if "founder" in all_text:
@@ -209,6 +232,7 @@ class FakeLLM:
             return LLMResult(
                 data={
                     "criteria": criteria,
+                    "segment_match": segment_match,
                     "role": role,
                     "segment": segment,
                     "why_fit": why_fit,

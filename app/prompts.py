@@ -44,7 +44,13 @@ Assess these criteria:
 - role: the person is a builder (engineer, developer), founder, or researcher.
 - domain: their work is in AI models, AI applications, developer tools, AI infrastructure, robotics or embodied AI.
 - individual: the account belongs to a real individual, not a company, product, news or bot account.
-- campaign_fit: they match the target segment given by the team.
+
+Also assess segment_match against the target segment given by the team (for example a region or a focus):
+- "match": the text shows the person fits it.
+- "mismatch": the text clearly shows they do not, for example a stated location outside the region.
+- "unknown": the text does not say. Missing information is "unknown", never "mismatch".
+Give up to two pieces of evidence for segment_match. Each is an exact quote from the bio (source "bio"), from one
+listed post (source "post", with its post_id), or from the location field (source "location").
 
 For each criterion, give up to two pieces of evidence. Each is an exact quote of 5 to 30 words copied character
 for character from the bio (source "bio") or from one listed post (source "post", with its post_id). If there
@@ -68,7 +74,6 @@ SCORING_TOOL = {
                             "role",
                             "domain",
                             "individual",
-                            "campaign_fit",
                         ],
                     },
                     "met": {"type": "boolean"},
@@ -114,6 +119,32 @@ SCORING_TOOL = {
             "items": {"type": "string", "maxLength": 200},
         },
         "caution": {"type": ["string", "null"]},
+        "segment_match": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["match", "mismatch", "unknown"],
+                },
+                "evidence": {
+                    "type": "array",
+                    "maxItems": 2,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "source": {
+                                "type": "string",
+                                "enum": ["bio", "post", "location"],
+                            },
+                            "post_id": {"type": ["string", "null"]},
+                            "quote": {"type": "string"},
+                        },
+                        "required": ["source", "quote"],
+                    },
+                },
+            },
+            "required": ["status", "evidence"],
+        },
     },
-    "required": ["criteria", "role", "segment", "why_fit", "caution"],
+    "required": ["criteria", "role", "segment", "why_fit", "caution", "segment_match"],
 }
