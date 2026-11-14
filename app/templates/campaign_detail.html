@@ -6,10 +6,17 @@
     <h2>{{ campaign.name }}</h2>
     <p style="color: #4b5563; margin-top: -10px;">{{ campaign.segment }}</p>
   </div>
-  <div>
+  <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
     <form action="/campaigns/{{ campaign.id }}/run" method="POST" style="display: inline;">
       <button type="submit" class="btn" style="padding: 10px 20px; font-size: 15px;">Run discovery</button>
     </form>
+    <div style="display: inline-block;">
+      <form action="/campaigns/{{ campaign.id }}/draft" method="POST" style="display: inline;">
+        <button type="submit" class="btn" style="padding: 10px 20px; font-size: 15px; background: #059669;">Draft messages</button>
+      </form>
+      <small style="color: #6b7280; display: block; margin-top: 4px;">Drafts up to 10 of the highest-scored prospects without a draft</small>
+    </div>
+    <a href="/campaigns/{{ campaign.id }}/review" class="btn" style="padding: 10px 20px; font-size: 15px; text-decoration: none; background: #4f46e5;">Review drafts ({{ draft_count }})</a>
   </div>
 </div>
 

@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="margin-bottom: 20px;">
+  <a href="/campaigns/{{ campaign.id }}" style="text-decoration: none; color: #2563eb; font-size: 14px;">&larr; Back to {{ campaign.name }}</a>
+  <h2 style="margin-top: 10px;">Review Drafts — {{ campaign.name }}</h2>
+</div>
+
+<div class="tabs">
+  <a href="/campaigns/{{ campaign.id }}/review?tab=drafts" class="{% if current_tab == 'drafts' %}active{% endif %}">
+    Drafts ({{ count_drafts }})
+  </a>
+  <a href="/campaigns/{{ campaign.id }}/review?tab=approved" class="{% if current_tab == 'approved' %}active{% endif %}">
+    Approved ({{ count_approved }})
+  </a>
+  <a href="/campaigns/{{ campaign.id }}/review?tab=no_evidence" class="{% if current_tab == 'no_evidence' %}active{% endif %}">
+    No Evidence ({{ count_no_evidence }})
+  </a>
+</div>
+
+{% if current_tab == 'drafts' %}
+  {% if not drafts %}
+    <p style="color: #6b7280; margin-top: 20px;">No drafts ready for review. Click "Draft messages" on the campaign page to generate drafts.</p>
+  {% else %}
+    <div style="display: flex; flex-direction: column; gap: 25px; margin-top: 20px;">
+      {% for card in drafts %}
+      <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.05); display: flex; flex-wrap: wrap; gap: 25px;">
+        
+        <!-- Left column: Prospect details and evidence -->
+        <div style="flex: 1; min-width: 320px;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline;">
+            <h3 style="margin: 0;">
+              <a href="https://x.com/{{ card.prospect.username }}" target="_blank" rel="noopener" style="text-decoration: none; color: #111;">
+                @{{ card.prospect.username }}
+              </a>
+            </h3>
+            <span style="font-size: 18px; font-weight: bold; color: #2563eb;">Score: {{ card.prospect.score or "-" }}</span>
+          </div>
+          <div style="color: #4b5563; font-size: 14px; margin-top: 2px;">{{ card.prospect.name or "" }}</div>
+
+          <div style="margin-top: 10px; font-size: 13px; color: #374151;">
+            <div><strong>Role:</strong> {{ card.prospect.role or "-" }} | <strong>Segment:</strong> {{ card.prospect.segment or "-" }}</div>
+            <div style="margin-top: 4px;">
+              <strong>Can DM:</strong> {{ card.can_dm }} | <strong>Follows you:</strong> {{ card.follows_you }}
+            </div>
+          </div>
+
+          {% if card.why_fit %}
+            <div style="margin-top: 12px; font-size: 13px;">
+              <strong>Why fit:</strong>
+              {% for line in card.why_fit %}
+                <div style="color: #4b5563;">• {{ line }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          <div style="margin-top: 16px;">
+            <strong style="font-size: 13px; text-transform: uppercase; color: #6b7280; letter-spacing: 0.5px;">Verified Evidence</strong>
+            <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px;">
+              {% for ev in card.evidence %}
+                <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 4px; padding: 8px 10px; font-size: 13px;">
+                  <span style="font-weight: bold; color: #4f46e5;">[{{ ev.id }}]</span>
+                  <span style="color: #6b7280; font-size: 12px;">({{ ev.source }}):</span>
+                  <div style="margin-top: 3px; color: #1f2937;">
+                    <a href="{{ ev.url }}" target="_blank" rel="noopener" style="text-decoration: none; color: inherit;">
+                      "{{ ev.text }}"
+                    </a>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <!-- Right column: Draft text, claims, flags, and actions -->
+        <div style="flex: 1.2; min-width: 340px; border-left: 1px solid #f3f4f6; padding-left: 20px;">
+          <form method="post" action="/prospects/{{ card.prospect.id }}/approve">
+            <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px;">
+              <span style="font-weight: 600; font-size: 14px;">
+                Draft Version {{ card.draft.version }}
+                {% if card.draft.edited_by_human %}
+                  <span style="color: #059669; font-weight: normal; margin-left: 6px;">(edited by you)</span>
+                {% endif %}
+              </span>
+              <span style="font-size: 12px; color: #6b7280;">{{ card.char_count }} characters</span>
+            </div>
+
+            <textarea name="text" rows="8" style="width: 100%; max-width: 100%; box-sizing: border-box; font-family: inherit; font-size: 14px; line-height: 1.5; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px;">{{ card.draft.text }}</textarea>
+
+            <!-- Claims list -->
+            {% if card.draft.claims %}
+              <div style="margin-top: 10px; font-size: 13px;">
+                <strong style="color: #4b5563;">Claims in this draft:</strong>
+                <div style="margin-top: 4px; display: flex; flex-direction: column; gap: 3px;">
+                  {% for c in card.draft.claims %}
+                    <div style="color: #374151;">
+                      <span style="font-style: italic;">"{{ c.text }}"</span> &rarr; <span style="font-weight: 600; color: #4f46e5;">{{ c.evidence_id }}</span>
+                    </div>
+                  {% endfor %}
+                </div>
+              </div>
+            {% endif %}
+
+            <!-- Flags list -->
+            {% if card.flags %}
+              <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 6px;">
+                {% for f in card.flags %}
+                  {% if f.level == "block" %}
+                    <div style="background: #fee2e2; border: 1px solid #f87171; color: #991b1b; padding: 6px 10px; border-radius: 4px; font-size: 13px;">
+                      <strong>Blocked:</strong> {{ f.text }}{% if f.detail %}: <span style="font-style: italic;">{{ f.detail }}</span>{% endif %}
+                    </div>
+                  {% else %}
+                    <div style="background: #fef3c7; border: 1px solid #fcd34d; color: #92400e; padding: 6px 10px; border-radius: 4px; font-size: 13px;">
+                      <strong>Check:</strong> {{ f.text }}{% if f.detail %}: <span style="font-style: italic;">{{ f.detail }}</span>{% endif %}
+                    </div>
+                  {% endif %}
+                {% endfor %}
+              </div>
+            {% endif %}
+
+            <!-- Save edit & Approve buttons -->
+            <div style="margin-top: 15px; display: flex; gap: 10px; align-items: center;">
+              <button type="submit" formaction="/prospects/{{ card.prospect.id }}/edit" class="btn btn-secondary">Save edit</button>
+              {% if card.can_approve_ok %}
+                <button type="submit" formaction="/prospects/{{ card.prospect.id }}/approve" class="btn" style="background: #059669;">Approve</button>
+              {% else %}
+                <button type="button" class="btn" style="background: #9ca3af; cursor: not-allowed;" disabled title="{{ card.can_approve_reason }}">Approve</button>
+                <small style="color: #dc2626; font-size: 12px;">{{ card.can_approve_reason }}</small>
+              {% endif %}
+            </div>
+          </form>
+
+          <!-- Separate small action forms -->
+          <div style="margin-top: 15px; padding-top: 12px; border-top: 1px solid #f3f4f6; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+            <form method="post" action="/prospects/{{ card.prospect.id }}/draft" style="display: inline;">
+              <button type="submit" class="btn" style="background: #4b5563; font-size: 12px; padding: 4px 8px;">Redraft</button>
+            </form>
+
+            <form method="post" action="/prospects/{{ card.prospect.id }}/reject" style="display: inline-flex; gap: 4px; align-items: center;">
+              <input type="text" name="reason" placeholder="Reason (optional)" maxlength="200" style="padding: 4px 8px; font-size: 12px; width: 150px; border: 1px solid #d1d5db; border-radius: 4px;">
+              <button type="submit" class="btn" style="background: #dc2626; font-size: 12px; padding: 4px 8px;">Reject</button>
+            </form>
+
+            <form method="post" action="/prospects/{{ card.prospect.id }}/do-not-contact" style="display: inline;">
+              <button type="submit" class="btn" style="background: #7f1d1d; font-size: 12px; padding: 4px 8px;">Do not contact</button>
+            </form>
+          </div>
+        </div>
+
+      </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+{% elif current_tab == 'approved' %}
+  <div style="margin-top: 15px; margin-bottom: 20px; background: #e0f2fe; border: 1px solid #7dd3fc; color: #0369a1; padding: 10px 15px; border-radius: 6px; font-size: 14px;">
+    <strong>Note:</strong> Sending is not available yet.
+  </div>
+
+  {% if not approved_list %}
+    <p style="color: #6b7280;">No approved messages yet.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Recipient</th>
+          <th>Final Message</th>
+          <th>Approved At</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in approved_list %}
+        <tr>
+          <td>
+            <strong>@{{ o.username }}</strong>
+            <br><small style="color: #6b7280;">{{ o.name or "" }}</small>
+          </td>
+          <td style="max-width: 400px; font-size: 13px; white-space: pre-wrap;">{{ o.final_text }}</td>
+          <td style="font-size: 13px; white-space: nowrap;">{{ o.approved_at }}</td>
+          <td>
+            {% if o.state == 'approved' %}
+              <span class="badge" style="background: #dcfce7; color: #15803d;">Waiting to send</span>
+            {% elif o.state == 'cancelled' %}
+              <span class="badge" style="background: #f3f4f6; color: #4b5563;">Withdrawn</span>
+            {% else %}
+              <span class="badge">{{ o.state }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if o.state == 'approved' %}
+              <form method="post" action="/outreach/{{ o.id }}/withdraw" style="display: inline;">
+                <button type="submit" class="btn" style="background: #6b7280; font-size: 12px; padding: 4px 8px;">Withdraw</button>
+              </form>
+            {% elif o.state == 'cancelled' %}
+              <form method="post" action="/outreach/{{ o.id }}/reapprove" style="display: inline;">
+                <button type="submit" class="btn" style="background: #059669; font-size: 12px; padding: 4px 8px;">Re-approve</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+{% elif current_tab == 'no_evidence' %}
+  {% if not no_evidence_list %}
+    <p style="color: #6b7280; margin-top: 20px;">No prospects in this tab.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Prospect</th>
+          <th>Score</th>
+          <th>Role / Segment</th>
+          <th>Why Fit</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in no_evidence_list %}
+        <tr>
+          <td>
+            <a href="https://x.com/{{ p.username }}" target="_blank" rel="noopener">@{{ p.username }}</a>
+            <br><small style="color: #6b7280;">{{ p.name or "" }}</small>
+          </td>
+          <td style="font-size: 16px; font-weight: bold;">{{ p.score if p.score is not none else "-" }}</td>
+          <td>
+            <strong>{{ p.role or "-" }}</strong>
+            <br><small>{{ p.segment or "" }}</small>
+          </td>
+          <td style="max-width: 250px; font-size: 13px;">
+            {% for line in p.why_fit_lines %}
+              <div>{{ line }}</div>
+            {% endfor %}
+          </td>
+          <td style="font-size: 13px; color: #4b5563;">
+            {{ plain_reasons.get(p.state_reason, p.state_reason) }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+{% endif %}
+
+{% endblock %}

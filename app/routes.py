@@ -12,7 +12,18 @@ from app.deps import build_llm, build_reader, current_sender, get_conn
 from app.discovery import run_discovery
 from app.evidence import normalize
 from app.ledger import estimate_campaign_max_cost, spent
-from app import db
+from app import db, approval
+from app.approval import AlreadyContacted, Suppressed
+from app.drafting import (
+    draft_campaign,
+    draft_prospect,
+    save_human_edit,
+    latest_draft,
+    can_approve,
+    evidence_items,
+    PLAIN_FLAG_TEXTS,
+)
+from app.state import transition, TransitionError
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -30,6 +41,8 @@ PLAIN_REASONS = {
     "inactive": "No original posts in the last 60 days",
     "low_score": "Score below the campaign minimum",
     "outside_segment": "Outside the target segment",
+    "no_evidence": "Nothing specific enough to write about",
+    "insufficient_evidence": "Nothing specific enough to write about",
 }
 
 
@@ -360,6 +373,11 @@ def campaign_detail(
     ctx["counts_by_tab"] = counts_by_tab
     ctx["current_view"] = view
     ctx["plain_reasons"] = PLAIN_REASONS
+    cur_draft_cnt = conn.execute(
+        "SELECT count(*) FROM prospects WHERE campaign_id = ? AND state = 'drafted'",
+        (id,),
+    ).fetchone()[0]
+    ctx["draft_count"] = cur_draft_cnt
     return templates.TemplateResponse(
         request=request, name="campaign_detail.html", context=ctx
     )
@@ -498,3 +516,429 @@ def view_costs(
     ctx["simulated_by_day"] = [dict(r) for r in sim_by_day]
 
     return templates.TemplateResponse(request=request, name="costs.html", context=ctx)
+
+
+@router.post("/campaigns/{id}/draft")
+def draft_campaign_messages(
+    id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+    settings: Settings = Depends(get_settings),
+):
+    cur = conn.execute("SELECT * FROM campaigns WHERE id = ?", (id,))
+    campaign = cur.fetchone()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    clock = SystemClock()
+    simulated = settings.mode == "mock"
+    llm = build_llm(settings)
+
+    res = draft_campaign(conn, id, llm, settings, clock, simulated=simulated)
+    if res.get("stopped_reason") == "budget_reached":
+        msg = f"Campaign budget was reached. Drafted {res['drafted']}, no evidence for {res['no_evidence']}."
+    else:
+        msg = f"Drafted {res['drafted']}, no evidence for {res['no_evidence']}, skipped {res['skipped']}, errors {res['errors']}."
+
+    return RedirectResponse(
+        url=f"/campaigns/{id}?msg={urllib.parse.quote(msg)}",
+        status_code=303,
+    )
+
+
+@router.get("/campaigns/{id}/review")
+def review_campaign_drafts(
+    id: int,
+    request: Request,
+    tab: str = Query("drafts"),
+    msg: str | None = Query(None),
+    error: str | None = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+    settings: Settings = Depends(get_settings),
+):
+    cur = conn.execute("SELECT * FROM campaigns WHERE id = ?", (id,))
+    campaign = cur.fetchone()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    cnt_drafts = conn.execute(
+        "SELECT count(*) FROM prospects WHERE campaign_id = ? AND state = 'drafted'",
+        (id,),
+    ).fetchone()[0]
+    cnt_approved = conn.execute(
+        """
+        SELECT count(*) FROM outreach o
+        JOIN prospects p ON o.prospect_id = p.id
+        WHERE p.campaign_id = ? AND o.state IN ('approved', 'cancelled')
+        """,
+        (id,),
+    ).fetchone()[0]
+    cnt_no_ev = conn.execute(
+        "SELECT count(*) FROM prospects WHERE campaign_id = ? AND state = 'no_evidence'",
+        (id,),
+    ).fetchone()[0]
+
+    ctx = _common_context(request, conn, settings, msg, error)
+    ctx["campaign"] = dict(campaign)
+    ctx["current_tab"] = tab if tab in ("drafts", "approved", "no_evidence") else "drafts"
+    ctx["count_drafts"] = cnt_drafts
+    ctx["count_approved"] = cnt_approved
+    ctx["count_no_evidence"] = cnt_no_ev
+    ctx["plain_reasons"] = PLAIN_REASONS
+
+    if ctx["current_tab"] == "drafts":
+        pros_cur = conn.execute(
+            """
+            SELECT p.*, u.username, u.name, u.bio, u.receives_your_dm, u.connection_status
+            FROM prospects p
+            JOIN x_users u ON p.x_user_id = u.x_user_id
+            WHERE p.campaign_id = ? AND p.state = 'drafted'
+            ORDER BY p.score DESC NULLS LAST, p.id DESC
+            """,
+            (id,),
+        )
+        drafts_list = []
+        for p_row in pros_cur.fetchall():
+            p_dict = dict(p_row)
+            d = latest_draft(conn, p_dict["id"])
+            if not d:
+                continue
+
+            if p_dict["receives_your_dm"] is True or p_dict["receives_your_dm"] == 1:
+                can_dm = "yes"
+            elif p_dict["receives_your_dm"] is False or p_dict["receives_your_dm"] == 0:
+                can_dm = "no"
+            else:
+                can_dm = "unknown"
+
+            conn_status = []
+            if p_dict["connection_status"]:
+                try:
+                    conn_status = json.loads(p_dict["connection_status"])
+                except Exception:
+                    conn_status = []
+            follows_you = "yes" if "followed_by" in conn_status else "no"
+
+            fit_data = {}
+            if p_dict["fit_reasons"]:
+                try:
+                    fit_data = json.loads(p_dict["fit_reasons"])
+                except Exception:
+                    fit_data = {}
+            why_fit = fit_data.get("why_fit", [])
+            if isinstance(why_fit, str):
+                why_fit = [why_fit]
+
+            ev_list = evidence_items(conn, p_dict["id"])
+            ok, reason = can_approve(d)
+
+            formatted_flags = []
+            for f in d.get("validator_flags", []):
+                code = f.get("code")
+                level = f.get("level")
+                detail = f.get("detail", "")
+                text = PLAIN_FLAG_TEXTS.get(code, code)
+                formatted_flags.append(
+                    {
+                        "level": level,
+                        "code": code,
+                        "detail": detail,
+                        "text": text,
+                    }
+                )
+
+            drafts_list.append(
+                {
+                    "prospect": p_dict,
+                    "can_dm": can_dm,
+                    "follows_you": follows_you,
+                    "why_fit": why_fit,
+                    "evidence": ev_list,
+                    "draft": d,
+                    "char_count": len(d.get("text", "")),
+                    "can_approve_ok": ok,
+                    "can_approve_reason": reason,
+                    "flags": formatted_flags,
+                }
+            )
+        ctx["drafts"] = drafts_list
+
+    elif ctx["current_tab"] == "approved":
+        app_cur = conn.execute(
+            """
+            SELECT o.id, o.state, o.final_text, o.approved_at, u.username, u.name
+            FROM outreach o
+            JOIN prospects p ON o.prospect_id = p.id
+            JOIN x_users u ON p.x_user_id = u.x_user_id
+            WHERE p.campaign_id = ? AND o.state IN ('approved', 'cancelled')
+            ORDER BY o.id DESC
+            """,
+            (id,),
+        )
+        ctx["approved_list"] = [dict(r) for r in app_cur.fetchall()]
+
+    elif ctx["current_tab"] == "no_evidence":
+        no_ev_cur = conn.execute(
+            """
+            SELECT p.*, u.username, u.name, u.bio
+            FROM prospects p
+            JOIN x_users u ON p.x_user_id = u.x_user_id
+            WHERE p.campaign_id = ? AND p.state = 'no_evidence'
+            ORDER BY p.score DESC NULLS LAST, p.id DESC
+            """,
+            (id,),
+        )
+        no_ev_list = []
+        for p_row in no_ev_cur.fetchall():
+            p_dict = dict(p_row)
+            fit_data = {}
+            if p_dict["fit_reasons"]:
+                try:
+                    fit_data = json.loads(p_dict["fit_reasons"])
+                except Exception:
+                    fit_data = {}
+            why_fit = fit_data.get("why_fit", [])
+            if isinstance(why_fit, str):
+                why_fit = [why_fit]
+            p_dict["why_fit_lines"] = why_fit
+            no_ev_list.append(p_dict)
+        ctx["no_evidence_list"] = no_ev_list
+
+    return templates.TemplateResponse(
+        request=request, name="review.html", context=ctx
+    )
+
+
+@router.post("/prospects/{pid}/draft")
+def redraft_single_prospect(
+    pid: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+    settings: Settings = Depends(get_settings),
+):
+    cur = conn.execute("SELECT campaign_id FROM prospects WHERE id = ?", (pid,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    cid = row["campaign_id"]
+
+    clock = SystemClock()
+    simulated = settings.mode == "mock"
+    llm = build_llm(settings)
+
+    try:
+        outcome = draft_prospect(conn, pid, llm, settings, clock, simulated=simulated)
+    except Exception as e:
+        err_msg = f"Redraft failed: {e}"
+        return RedirectResponse(
+            url=f"/campaigns/{cid}/review?tab=drafts&error={urllib.parse.quote(err_msg)}",
+            status_code=303,
+        )
+
+    if outcome == "no_evidence":
+        msg = "Nothing specific enough to write about"
+        return RedirectResponse(
+            url=f"/campaigns/{cid}/review?tab=no_evidence&msg={urllib.parse.quote(msg)}",
+            status_code=303,
+        )
+
+    return RedirectResponse(
+        url=f"/campaigns/{cid}/review?tab=drafts&msg={urllib.parse.quote('Draft updated')}",
+        status_code=303,
+    )
+
+
+@router.post("/prospects/{pid}/edit")
+def edit_prospect_draft(
+    pid: int,
+    text: str = Form(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    cur = conn.execute("SELECT campaign_id FROM prospects WHERE id = ?", (pid,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    cid = row["campaign_id"]
+
+    clock = SystemClock()
+    try:
+        save_human_edit(conn, pid, text, clock)
+    except Exception as e:
+        return RedirectResponse(
+            url=f"/campaigns/{cid}/review?tab=drafts&error={urllib.parse.quote(str(e))}",
+            status_code=303,
+        )
+
+    return RedirectResponse(
+        url=f"/campaigns/{cid}/review?tab=drafts&msg={urllib.parse.quote('Draft edit saved')}",
+        status_code=303,
+    )
+
+
+@router.post("/prospects/{pid}/approve")
+def approve_prospect_draft(
+    pid: int,
+    text: str = Form(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    cur = conn.execute("SELECT campaign_id FROM prospects WHERE id = ?", (pid,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    cid = row["campaign_id"]
+
+    d = latest_draft(conn, pid)
+    if not d or d.get("text", "") != text:
+        err = "Save your edit before approving"
+        return RedirectResponse(
+            url=f"/campaigns/{cid}/review?tab=drafts&error={urllib.parse.quote(err)}",
+            status_code=303,
+        )
+
+    ok, reason = can_approve(d)
+    if not ok:
+        return RedirectResponse(
+            url=f"/campaigns/{cid}/review?tab=drafts&error={urllib.parse.quote(reason)}",
+            status_code=303,
+        )
+
+    clock = SystemClock()
+    now_str = iso(clock.now())
+    try:
+        approval.approve_prospect(conn, pid, text, now_str)
+    except AlreadyContacted:
+        err = "Already messaged from this account"
+        return RedirectResponse(
+            url=f"/campaigns/{cid}/review?tab=drafts&error={urllib.parse.quote(err)}",
+            status_code=303,
+        )
+    except Suppressed:
+        err = "On your do-not-contact list"
+        return RedirectResponse(
+            url=f"/campaigns/{cid}/review?tab=drafts&error={urllib.parse.quote(err)}",
+            status_code=303,
+        )
+    except TransitionError:
+        err = "This draft was already handled"
+        return RedirectResponse(
+            url=f"/campaigns/{cid}/review?tab=drafts&error={urllib.parse.quote(err)}",
+            status_code=303,
+        )
+
+    return RedirectResponse(
+        url=f"/campaigns/{cid}/review?tab=approved&msg={urllib.parse.quote('Draft approved')}",
+        status_code=303,
+    )
+
+
+@router.post("/prospects/{pid}/reject")
+def reject_prospect_draft(
+    pid: int,
+    reason: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    cur = conn.execute("SELECT campaign_id FROM prospects WHERE id = ?", (pid,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    cid = row["campaign_id"]
+
+    clock = SystemClock()
+    now_str = iso(clock.now())
+    clean_reason = reason.strip()[:200] if reason else None
+    with db.transaction(conn):
+        transition(
+            conn,
+            "prospect",
+            pid,
+            "drafted",
+            "rejected",
+            "human",
+            now_str,
+            reason=clean_reason,
+        )
+
+    return RedirectResponse(
+        url=f"/campaigns/{cid}/review?tab=drafts&msg={urllib.parse.quote('Prospect rejected')}",
+        status_code=303,
+    )
+
+
+@router.post("/prospects/{pid}/do-not-contact")
+def do_not_contact_prospect(
+    pid: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    cur = conn.execute(
+        "SELECT campaign_id, x_user_id, state FROM prospects WHERE id = ?",
+        (pid,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    cid = row["campaign_id"]
+    x_user_id = row["x_user_id"]
+
+    clock = SystemClock()
+    now_str = iso(clock.now())
+    approval.add_suppression(conn, x_user_id, "manual", "manual", now_str)
+    if row["state"] == "drafted":
+        with db.transaction(conn):
+            transition(
+                conn,
+                "prospect",
+                pid,
+                "drafted",
+                "rejected",
+                "human",
+                now_str,
+                reason="do_not_contact",
+            )
+
+    return RedirectResponse(
+        url=f"/campaigns/{cid}/review?tab=drafts&msg={urllib.parse.quote('Added to do-not-contact list')}",
+        status_code=303,
+    )
+
+
+@router.post("/outreach/{oid}/withdraw")
+def withdraw_outreach(
+    oid: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    cur = conn.execute(
+        "SELECT p.campaign_id FROM outreach o JOIN prospects p ON o.prospect_id = p.id WHERE o.id = ?",
+        (oid,),
+    )
+    row = cur.fetchone()
+    cid = row["campaign_id"] if row else 1
+
+    clock = SystemClock()
+    now_str = iso(clock.now())
+    approval.cancel_approval(conn, oid, now_str)
+
+    return RedirectResponse(
+        url=f"/campaigns/{cid}/review?tab=approved&msg={urllib.parse.quote('Approval withdrawn')}",
+        status_code=303,
+    )
+
+
+@router.post("/outreach/{oid}/reapprove")
+def reapprove_outreach(
+    oid: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    cur = conn.execute(
+        "SELECT p.campaign_id FROM outreach o JOIN prospects p ON o.prospect_id = p.id WHERE o.id = ?",
+        (oid,),
+    )
+    row = cur.fetchone()
+    cid = row["campaign_id"] if row else 1
+
+    clock = SystemClock()
+    now_str = iso(clock.now())
+    approval.reapprove(conn, oid, now_str)
+
+    return RedirectResponse(
+        url=f"/campaigns/{cid}/review?tab=approved&msg={urllib.parse.quote('Message re-approved')}",
+        status_code=303,
+    )
+
