@@ -10,6 +10,7 @@ PRICES_USD = {
     "following": 0.010,  # per user returned
     "followers_owned": 0.001,  # sender's own followers with the sender's token
     "user_posts": 0.005,  # per post returned
+    "dm_send": 0.010,  # per DM created; unconfirmed estimate, check the X console
 }
 
 

@@ -215,6 +215,23 @@ class XClient:
                 users.append(self._parse_user(u))
         return users
 
+    def user_by_id(self, user_id: str) -> XUser | None:
+        res = self._request("GET", f"/users/{user_id}", params={"user.fields": USER_FIELDS})
+        data = res.get("data")
+        if not data:
+            return None
+        self._record_cost("users_lookup", 1)
+        return self._parse_user(data)
+
+    def send_dm(self, participant_id: str, text: str) -> dict:
+        res = self._request(
+            "POST",
+            f"/dm_conversations/with/{participant_id}/messages",
+            json_data={"text": text},
+        )
+        self._record_cost("dm_send", 1)
+        return res.get("data") or {}
+
     def search_recent(
         self, query: str, max_posts: int
     ) -> tuple[list[XPost], list[XUser]]:
