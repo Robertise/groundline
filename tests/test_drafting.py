@@ -11,6 +11,7 @@ from app.drafting import (
     MIN_CHARS,
     MAX_CHARS,
     Flag,
+    clean_message_text,
     check_draft,
     judge,
     draft_prospect,
@@ -454,3 +455,80 @@ def test_can_approve_rules():
     ok, msg = can_approve(human_huge)
     assert ok is False
     assert "1,000 characters" in msg
+
+
+def test_clean_message_text_normalises_line_endings_and_blank_lines():
+    raw = "  \r\nLine 1   \r\n\r\n\r\n\r\nLine 2 \t\r\n\r\nLine 3  \r  \n  "
+    cleaned = clean_message_text(raw)
+    assert cleaned == "Line 1\n\nLine 2\n\nLine 3"
+    assert clean_message_text("") == ""
+    assert clean_message_text("   \r\n\r   ") == ""
+    assert clean_message_text("A\r\nB\rC") == "A\nB\nC"
+
+
+def test_model_draft_with_crlf_is_stored_with_lf(draft_setup):
+    conn, settings, clock = draft_setup
+
+    class CRLFModel:
+        def call_tool(self, system, user, tool_name, tool_schema):
+            if tool_name == "draft_dm":
+                msg = (
+                    "Hey Alice,\r\n\r\n"
+                    "Building robotics perception models is fascinating work.\r\n\r\n"
+                    "We are developing open eval benchmarks for robotics in SEA. "
+                    "Would love to hear your thoughts if you have a moment, but no worries if not!"
+                )
+                return LLMResult(
+                    data={
+                        "decision": "draft",
+                        "message": msg,
+                        "claims": [
+                            {
+                                "text": "Building robotics perception models",
+                                "evidence_id": "E1",
+                            }
+                        ],
+                    },
+                    input_tokens=100,
+                    output_tokens=50,
+                )
+            elif tool_name == "judge_draft":
+                return LLMResult(
+                    data={
+                        "sentences": [],
+                        "fake_familiarity": False,
+                        "has_soft_opt_out": True,
+                        "sensitive_trait": False,
+                    },
+                    input_tokens=50,
+                    output_tokens=20,
+                )
+            raise ValueError(f"Unknown tool: {tool_name}")
+
+    outcome = draft_prospect(conn, 1, CRLFModel(), settings, clock, simulated=True)
+    assert outcome == "drafted"
+
+    draft = latest_draft(conn, 1)
+    assert draft is not None
+    assert "\r" not in draft["text"]
+    assert "\n\n" in draft["text"]
+
+
+def test_human_edit_is_stored_without_carriage_returns(draft_setup):
+    conn, settings, clock = draft_setup
+    llm = FakeLLM()
+    draft_prospect(conn, 1, llm, settings, clock, simulated=True)
+
+    text_with_crlf = (
+        "Hey Alice,\r\n\r\n"
+        "Here is a customized human edit with CRLF line endings.\r\n\r\n"
+        "Would love to connect if you have time!"
+    )
+    save_human_edit(conn, 1, text_with_crlf, clock)
+
+    draft = latest_draft(conn, 1)
+    assert draft is not None
+    assert draft["version"] == 2
+    assert draft["edited_by_human"] == 1
+    assert "\r" not in draft["text"]
+    assert "\n\n" in draft["text"]

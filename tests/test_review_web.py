@@ -8,6 +8,7 @@ from app.config import Settings
 from app.db import connect, init_db
 from app.discovery import run_discovery
 from app.drafting import draft_campaign, draft_prospect, latest_draft
+from app.llm.base import LLMResult
 from app.llm.fake import FakeLLM
 from app.main import app
 from app.x.fixtures import FixtureReader
@@ -289,3 +290,138 @@ def test_model_text_is_escaped_on_review_page(review_setup):
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in resp.text
         # Ensure raw <script>alert(1)</script> does not appear
         assert "<script>alert(1)</script>" not in resp.text
+
+
+def test_multiline_model_draft_can_be_approved_when_browser_sends_crlf(tmp_path, monkeypatch):
+    db_file = tmp_path / "crlf_web.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    conn = connect(str(db_file))
+    init_db(conn)
+
+    clock = FrozenClock(datetime(2026, 11, 14, 10, 0, 0, tzinfo=timezone.utc))
+    settings = Settings(
+        mode="mock",
+        db_path=str(db_file),
+        fixtures_path="./fixtures/demo_x.json",
+    )
+    now_str = iso(clock.now())
+    conn.execute(
+        "INSERT INTO sender_accounts (id, x_user_id, username, daily_send_cap, created_at) "
+        "VALUES (1, '9100000000000000001', 'demo_sender', 20, ?)",
+        (now_str,),
+    )
+    conn.execute(
+        """
+        INSERT INTO campaigns (
+            id, sender_account_id, name, segment, brief, search_keywords, search_max_posts,
+            seed_handles, seed_following_max, include_sender_followers, followers_max,
+            max_deep_profiles, min_score, budget_usd, created_at
+        ) VALUES (
+            1, 1, 'SEA AI Builders', 'AI and robotics in SEA',
+            'We are developing tools for embodied AI agents in Southeast Asia.',
+            'robot, LLM, agent', 100, 'demo_seed_investor', 100, 1, 200, 40, 60, 50.0, ?
+        )
+        """,
+        (now_str,),
+    )
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn)
+    fake_llm = FakeLLM()
+    run_discovery(conn, 1, reader, fake_llm, settings, clock, simulated=True)
+
+    class MultilineLLM(FakeLLM):
+        def call_tool(self, system, user, tool_name, tool_schema):
+            res = super().call_tool(system, user, tool_name, tool_schema)
+            if tool_name == "draft_dm" and res.data.get("decision") == "draft":
+                data = dict(res.data)
+                data["message"] = data["message"].replace(". ", ".\n\n")
+                return LLMResult(
+                    data=data,
+                    input_tokens=res.input_tokens,
+                    output_tokens=res.output_tokens,
+                )
+            return res
+
+    cur = conn.execute(
+        "SELECT id FROM prospects WHERE campaign_id = 1 AND state = 'scored' AND score >= 60 LIMIT 1"
+    )
+    pid = cur.fetchone()["id"]
+    outcome = draft_prospect(conn, pid, MultilineLLM(), settings, clock, simulated=True)
+    assert outcome == "drafted"
+    d = latest_draft(conn, pid)
+    assert d is not None
+    assert "\n\n" in d["text"]
+    assert "\r" not in d["text"]
+    conn.close()
+
+    with TestClient(app) as client:
+        # Browser submits CRLF
+        submitted = d["text"].replace("\n", "\r\n")
+        resp = client.post(
+            f"/prospects/{pid}/approve",
+            data={"text": submitted},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "tab=approved" in resp.headers["location"]
+
+        conn = connect(str(db_file))
+        outreach_row = conn.execute(
+            "SELECT * FROM outreach WHERE prospect_id = ?", (pid,)
+        ).fetchone()
+        conn.close()
+        assert outreach_row is not None
+        assert "\r" not in outreach_row["final_text"]
+        assert "\n\n" in outreach_row["final_text"]
+
+
+def test_edit_then_approve_with_crlf_round_trip(review_setup):
+    with TestClient(app) as client:
+        conn = connect(review_setup)
+        cur = conn.execute("SELECT id FROM prospects WHERE campaign_id = 1 AND state = 'drafted' LIMIT 1")
+        pid = cur.fetchone()["id"]
+        conn.close()
+
+        # 1. Edit with CRLF
+        edited_text = (
+            "Hey Alice,\r\n\r\n"
+            "This is a human-edited message with multiple CRLF line endings.\r\n\r\n"
+            "Let us know if you would like to connect! No worries if busy."
+        )
+        edit_resp = client.post(
+            f"/prospects/{pid}/edit",
+            data={"text": edited_text},
+            follow_redirects=False,
+        )
+        assert edit_resp.status_code == 303
+        assert "Draft%20edit%20saved" in edit_resp.headers["location"]
+
+        # Verify stored draft has LF only
+        conn = connect(review_setup)
+        d = latest_draft(conn, pid)
+        conn.close()
+        assert d is not None
+        assert d["edited_by_human"] == 1
+        assert "\r" not in d["text"]
+        assert "\n\n" in d["text"]
+
+        # 2. Browser submits CRLF when clicking Approve
+        browser_submitted = d["text"].replace("\n", "\r\n")
+        app_resp = client.post(
+            f"/prospects/{pid}/approve",
+            data={"text": browser_submitted},
+            follow_redirects=False,
+        )
+        assert app_resp.status_code == 303
+        assert "tab=approved" in app_resp.headers["location"]
+
+        # 3. Outreach row has clean LF
+        conn = connect(review_setup)
+        outreach_row = conn.execute(
+            "SELECT * FROM outreach WHERE prospect_id = ?", (pid,)
+        ).fetchone()
+        conn.close()
+        assert outreach_row is not None
+        assert "\r" not in outreach_row["final_text"]
+        assert "\n\n" in outreach_row["final_text"]

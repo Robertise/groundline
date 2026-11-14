@@ -71,6 +71,22 @@ class Flag:
     detail: str = ""
 
 
+def clean_message_text(text: str) -> str:
+    """Canonical form for message text: LF line endings, no trailing spaces on lines,
+    at most one blank line in a row, no leading or trailing blank lines."""
+    if not text:
+        return ""
+    # Replace \r\n and \r with \n
+    t = text.replace("\r\n", "\n").replace("\r", "\n")
+    # Strip trailing spaces and tabs from every line
+    lines = [line.rstrip(" \t") for line in t.split("\n")]
+    t = "\n".join(lines)
+    # Collapse three or more consecutive \n into two
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    # Strip leading and trailing whitespace of the whole text
+    return t.strip()
+
+
 def get_word_5grams(text: str) -> set[tuple[str, ...]]:
     words = normalize(text).split()
     if len(words) < 5:
@@ -357,7 +373,8 @@ def draft_prospect(
                 return "no_evidence"
             return "skipped"
 
-        last_message = data.get("message", "")
+        raw_message = data.get("message", "")
+        last_message = clean_message_text(raw_message)
         raw_claims = data.get("claims", [])
         last_claims = []
         if isinstance(raw_claims, list):
@@ -487,6 +504,7 @@ def draft_campaign(
 def save_human_edit(
     conn: sqlite3.Connection, prospect_id: int, text: str, clock
 ) -> list[Flag]:
+    cleaned_text = clean_message_text(text)
     cur = conn.execute(
         "SELECT id, campaign_id, state FROM prospects WHERE id = ?",
         (prospect_id,),
@@ -509,7 +527,7 @@ def save_human_edit(
         except Exception:
             prev_claims = []
 
-    norm_text = normalize(text)
+    norm_text = normalize(cleaned_text)
     surviving_claims = [
         c
         for c in prev_claims
@@ -529,7 +547,7 @@ def save_human_edit(
     )
     other_messages = {r["username"]: r["text"] for r in cur_other.fetchall()}
 
-    flags = check_draft(text, [], set(), other_messages, human_edit=True)
+    flags = check_draft(cleaned_text, [], set(), other_messages, human_edit=True)
     flags_json = json.dumps(
         [
             {"level": f.level, "code": f.code, "detail": f.detail}
@@ -546,7 +564,7 @@ def save_human_edit(
             INSERT INTO drafts (prospect_id, version, text, claims, validator_flags, edited_by_human, created_at)
             VALUES (?, ?, ?, ?, ?, 1, ?)
             """,
-            (prospect_id, next_ver, text, claims_json, flags_json, now_str),
+            (prospect_id, next_ver, cleaned_text, claims_json, flags_json, now_str),
         )
         transition(
             conn, "prospect", prospect_id, "drafted", "drafted", "human", now_str
@@ -586,8 +604,8 @@ def can_approve(draft: dict) -> tuple[bool, str]:
     if not draft:
         return False, "No draft to approve"
 
-    text = draft.get("text", "")
-    if not text or not text.strip():
+    text = clean_message_text(draft.get("text", ""))
+    if not text:
         return False, "The message is empty"
     if len(text) > 1000:
         return False, "Longer than 1,000 characters"

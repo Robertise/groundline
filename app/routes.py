@@ -21,6 +21,7 @@ from app.drafting import (
     latest_draft,
     can_approve,
     evidence_items,
+    clean_message_text,
     PLAIN_FLAG_TEXTS,
 )
 from app.state import transition, TransitionError
@@ -654,7 +655,7 @@ def review_campaign_drafts(
                     "why_fit": why_fit,
                     "evidence": ev_list,
                     "draft": d,
-                    "char_count": len(d.get("text", "")),
+                    "char_count": len(clean_message_text(d.get("text", ""))),
                     "can_approve_ok": ok,
                     "can_approve_reason": reason,
                     "flags": formatted_flags,
@@ -786,7 +787,16 @@ def approve_prospect_draft(
     cid = row["campaign_id"]
 
     d = latest_draft(conn, pid)
-    if not d or d.get("text", "") != text:
+    if not d:
+        err = "Save your edit before approving"
+        return RedirectResponse(
+            url=f"/campaigns/{cid}/review?tab=drafts&error={urllib.parse.quote(err)}",
+            status_code=303,
+        )
+
+    stored_cleaned = clean_message_text(d.get("text", ""))
+    submitted_cleaned = clean_message_text(text)
+    if stored_cleaned != submitted_cleaned:
         err = "Save your edit before approving"
         return RedirectResponse(
             url=f"/campaigns/{cid}/review?tab=drafts&error={urllib.parse.quote(err)}",
@@ -803,7 +813,7 @@ def approve_prospect_draft(
     clock = SystemClock()
     now_str = iso(clock.now())
     try:
-        approval.approve_prospect(conn, pid, text, now_str)
+        approval.approve_prospect(conn, pid, stored_cleaned, now_str)
     except AlreadyContacted:
         err = "Already messaged from this account"
         return RedirectResponse(
