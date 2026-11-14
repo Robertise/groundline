@@ -4,7 +4,7 @@ import pytest
 
 from app.llm.base import LLMResult, LLMError, LLMOutputError
 from app.llm.bedrock import BedrockLLM
-from app.prompts import BIO_SCREEN_SYSTEM
+from app.prompts import BIO_SCREEN_SYSTEM, SCORING_SYSTEM
 from app.scoring import compute_score, score_user, screen_bios, WEIGHTS
 from app.x.base import XUser, XPost
 
@@ -564,3 +564,10 @@ def test_tier1_short_quote_is_checked_against_location_only():
 
 def test_tier1_prompt_says_segment_must_not_change_pass():
     assert "The target segment must not change pass or fail" in BIO_SCREEN_SYSTEM
+
+
+def test_prompts_say_flag_or_nationality_is_not_a_location():
+    sentence = "A flag emoji, a nationality, a language, or a place where the person studied or worked before is not a"
+    assert sentence in SCORING_SYSTEM
+    assert sentence in BIO_SCREEN_SYSTEM
+

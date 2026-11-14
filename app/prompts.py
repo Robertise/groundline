@@ -21,6 +21,8 @@ Rules:
   another region.
   "unknown": they do not say. An empty or vague location (for example "Earth" or "Internet") is "unknown",
   never "mismatch". Missing information is "unknown", never "mismatch".
+  A flag emoji, a nationality, a language, or a place where the person studied or worked before is not a
+  current location. On its own it is "unknown".
 - For "match" or "mismatch", copy into segment_quote the exact text from the location field or the bio that
   shows it, character for character. For "unknown", segment_quote is an empty string.
 - Return one result for every profile id you were given, by calling the tool."""
@@ -69,6 +71,8 @@ Also assess segment_match against the target segment given by the team (for exam
 - "match": the text shows the person fits it.
 - "mismatch": the text clearly shows they do not, for example a stated location outside the region.
 - "unknown": the text does not say. Missing information is "unknown", never "mismatch".
+A flag emoji, a nationality, a language, or a place where the person studied or worked before is not a
+current location. On its own it is "unknown".
 Give up to two pieces of evidence for segment_match. Each is an exact quote from the bio (source "bio"), from one
 listed post (source "post", with its post_id), or from the location field (source "location").
 
