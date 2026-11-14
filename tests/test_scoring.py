@@ -1,7 +1,8 @@
 from datetime import datetime, timezone, timedelta
+import json
 import pytest
 
-from app.llm.base import LLMResult, LLMError
+from app.llm.base import LLMResult, LLMError, LLMOutputError
 from app.llm.bedrock import BedrockLLM
 from app.scoring import compute_score, score_user, screen_bios, WEIGHTS
 from app.x.base import XUser, XPost
@@ -141,3 +142,92 @@ def test_bedrock_adapter_raises_without_tool_use():
     with pytest.raises(LLMError) as exc:
         bedrock.call_tool("system", "user", "test_tool", {})
     assert "No toolUse block" in str(exc.value)
+
+
+def test_criteria_returned_as_json_string_is_parsed():
+    class JsonStringLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            criteria_list = [
+                {
+                    "name": "role",
+                    "met": True,
+                    "evidence": [{"source": "bio", "quote": "building open source robotics"}],
+                },
+                {
+                    "name": "domain",
+                    "met": True,
+                    "evidence": [{"source": "bio", "quote": "building open source robotics"}],
+                },
+                {
+                    "name": "individual",
+                    "met": True,
+                    "evidence": [{"source": "bio", "quote": "building open source robotics"}],
+                },
+                {
+                    "name": "campaign_fit",
+                    "met": True,
+                    "evidence": [{"source": "bio", "quote": "building open source robotics"}],
+                },
+            ]
+            return LLMResult(
+                data={
+                    "criteria": json.dumps(criteria_list),
+                    "role": "builder",
+                    "segment": "robotics",
+                    "why_fit": json.dumps(["Builds open source robotics."]),
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    user = XUser(id="u1", username="roboticist", bio="building open source robotics in Singapore")
+    now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+    res, _ = score_user(JsonStringLLM(), "robotics", user, [], now)
+    assert res["criteria"]["role"]["met"] is True
+    assert res["criteria"]["domain"]["met"] is True
+    assert res["role"] == "builder"
+    assert res["why_fit"] == ["Builds open source robotics."]
+
+
+def test_malformed_criteria_raise_llm_output_error_with_usage():
+    class BadCriteriaLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={"criteria": "not valid json"},
+                input_tokens=123,
+                output_tokens=45,
+            )
+
+    user = XUser(id="u1", username="test", bio="AI researcher")
+    now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+    with pytest.raises(LLMOutputError) as exc_info:
+        score_user(BadCriteriaLLM(), "AI", user, [], now)
+
+    err = exc_info.value
+    assert err.input_tokens == 123
+    assert err.output_tokens == 45
+    assert len(err.raw) > 0
+
+
+def test_invalid_enum_values_fall_back_to_other():
+    class BadEnumLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "criteria": [
+                        {"name": "role", "met": True, "evidence": [{"source": "bio", "quote": "AI researcher"}]}
+                    ],
+                    "role": "super_ninja",
+                    "segment": "quantum_crypto",
+                    "caution": 12345,
+                },
+                input_tokens=50,
+                output_tokens=20,
+            )
+
+    user = XUser(id="u1", username="test", bio="AI researcher in Singapore")
+    now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+    res, _ = score_user(BadEnumLLM(), "AI", user, [], now)
+    assert res["role"] == "other"
+    assert res["segment"] == "other"
+    assert res["caution"] is None

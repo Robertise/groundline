@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 import json
 
 from app.evidence import quote_is_supported, validate_evidence
-from app.llm.base import LLMResult
+from app.llm.base import LLMResult, LLMOutputError, coerce_json_fields
 from app.prompts import (
     BIO_SCREEN_SYSTEM,
     BIO_SCREEN_TOOL,
@@ -20,6 +20,18 @@ WEIGHTS = {
 }
 ACTIVE_DAYS = 30
 INACTIVE_DAYS = 60
+
+ALLOWED_ROLES = {"builder", "founder", "researcher", "other"}
+ALLOWED_SEGMENTS = {
+    "models",
+    "applications",
+    "developer_tools",
+    "infrastructure",
+    "robotics",
+    "embodied_ai",
+    "other",
+}
+ALLOWED_CRITERIA_NAMES = {"role", "domain", "individual", "campaign_fit"}
 
 
 def compute_score(criteria: dict[str, bool]) -> int:
@@ -66,10 +78,17 @@ def screen_bios(
     total_in = res1.input_tokens
     total_out = res1.output_tokens
 
+    data = coerce_json_fields(data, list_fields=("results",))
     results_by_id = {}
-    for r in data.get("results", []):
-        uid = str(r["x_user_id"])
-        results_by_id[uid] = r
+    raw_results = data.get("results")
+    if isinstance(raw_results, list):
+        for r in raw_results:
+            if not isinstance(r, dict):
+                continue
+            uid = r.get("x_user_id")
+            if not isinstance(uid, str) or not uid:
+                continue
+            results_by_id[uid] = r
 
     # Check for missing ids and retry once
     missing = [u for u in user_batch if u.id not in results_by_id]
@@ -77,9 +96,16 @@ def screen_bios(
         retry_data, res2 = _call(missing)
         total_in += res2.input_tokens
         total_out += res2.output_tokens
-        for r in retry_data.get("results", []):
-            uid = str(r["x_user_id"])
-            results_by_id[uid] = r
+        retry_data = coerce_json_fields(retry_data, list_fields=("results",))
+        raw_retry = retry_data.get("results")
+        if isinstance(raw_retry, list):
+            for r in raw_retry:
+                if not isinstance(r, dict):
+                    continue
+                uid = r.get("x_user_id")
+                if not isinstance(uid, str) or not uid:
+                    continue
+                results_by_id[uid] = r
 
     # Validate quotes for passed profiles
     users_dict = {u.id: u for u in user_batch}
@@ -144,26 +170,73 @@ def score_user(
         tool_name="score_user",
         tool_schema=SCORING_TOOL,
     )
-    data = llm_res.data
+    raw_data = llm_res.data
+    if not isinstance(raw_data, dict):
+        raise LLMOutputError(
+            "Model output data is not a dict",
+            input_tokens=llm_res.input_tokens,
+            output_tokens=llm_res.output_tokens,
+            raw=str(raw_data)[:2000],
+        )
+
+    data = coerce_json_fields(raw_data, list_fields=("criteria", "why_fit"))
+    raw_criteria = data.get("criteria")
+    if not isinstance(raw_criteria, list):
+        raise LLMOutputError(
+            "criteria is missing or not a list",
+            input_tokens=llm_res.input_tokens,
+            output_tokens=llm_res.output_tokens,
+            raw=json.dumps(data, ensure_ascii=False, default=str)[:2000],
+        )
+
     posts_by_id = {str(p.id): p for p in posts}
 
     criteria_dict = {}
-    for crit in data.get("criteria", []):
-        cname = crit["name"]
-        llm_met = bool(crit.get("met", False))
-        raw_evidence = crit.get("evidence", [])
+    valid_crit_count = 0
+    for raw_crit in raw_criteria:
+        if not isinstance(raw_crit, dict):
+            continue
+        crit = coerce_json_fields(raw_crit, list_fields=("evidence",))
+        cname = crit.get("name")
+        if cname not in ALLOWED_CRITERIA_NAMES:
+            continue
+        cmet = crit.get("met")
+        if not isinstance(cmet, bool):
+            continue
+        cevidence = crit.get("evidence")
+        if not isinstance(cevidence, list):
+            continue
+
+        valid_evidence = []
+        for ev in cevidence:
+            if (
+                isinstance(ev, dict)
+                and isinstance(ev.get("source"), str)
+                and isinstance(ev.get("quote"), str)
+            ):
+                valid_evidence.append(ev)
+
+        valid_crit_count += 1
         surviving = validate_evidence(
-            raw_evidence,
+            valid_evidence,
             bio=user.bio,
             posts_by_id=posts_by_id,
             author_id=user.id,
             username=user.username,
         )
-        is_met = llm_met and len(surviving) > 0
+        is_met = cmet and len(surviving) > 0
         criteria_dict[cname] = {
             "met": is_met,
             "evidence": surviving,
         }
+
+    if valid_crit_count == 0:
+        raise LLMOutputError(
+            "No valid criterion remaining in model output",
+            input_tokens=llm_res.input_tokens,
+            output_tokens=llm_res.output_tokens,
+            raw=json.dumps(data, ensure_ascii=False, default=str)[:2000],
+        )
 
     # active is computed in code, never by the LLM
     active_met = False
@@ -204,12 +277,31 @@ def score_user(
     crit_bools = {k: v["met"] for k, v in criteria_dict.items()}
     score = compute_score(crit_bools)
 
+    raw_why_fit = data.get("why_fit")
+    why_fit = []
+    if isinstance(raw_why_fit, list):
+        why_fit = [item for item in raw_why_fit if isinstance(item, str)][:2]
+    elif isinstance(raw_why_fit, str):
+        why_fit = [raw_why_fit][:2]
+
+    role = data.get("role")
+    if role not in ALLOWED_ROLES:
+        role = "other"
+
+    segment_val = data.get("segment")
+    if segment_val not in ALLOWED_SEGMENTS:
+        segment_val = "other"
+
+    caution = data.get("caution")
+    if not isinstance(caution, str):
+        caution = None
+
     result = {
         "score": score,
         "criteria": criteria_dict,
-        "role": data.get("role", "other"),
-        "segment": data.get("segment", "other"),
-        "why_fit": data.get("why_fit", []),
-        "caution": data.get("caution"),
+        "role": role,
+        "segment": segment_val,
+        "why_fit": why_fit,
+        "caution": caution,
     }
     return result, llm_res

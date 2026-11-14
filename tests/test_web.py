@@ -292,3 +292,111 @@ def test_model_reason_is_shown_and_escaped(tmp_path, monkeypatch):
         assert "&lt;b&gt;x&lt;/b&gt;" in filtered_page.text
         assert "<b>x</b>" not in filtered_page.text
 
+
+def test_evidence_is_deduplicated_in_prospect_table(tmp_path, monkeypatch):
+    import json
+    from app.db import init_db
+
+    db_file = tmp_path / "web_dedup.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    conn = connect(str(db_file))
+    init_db(conn)
+    now_str = "2026-11-14T10:00:00+00:00"
+
+    with db.transaction(conn):
+        conn.execute(
+            "INSERT INTO sender_accounts (id, x_user_id, username, daily_send_cap, created_at) "
+            "VALUES (1, 's1', 'sender_me', 20, ?)",
+            (now_str,),
+        )
+        conn.execute(
+            "INSERT INTO campaigns (id, sender_account_id, name, segment, budget_usd, created_at) "
+            "VALUES (1, 1, 'Dedup Camp', 'AI', 10.0, ?)",
+            (now_str,),
+        )
+        conn.execute(
+            "INSERT INTO x_users (x_user_id, username, name, bio, fetched_at) "
+            "VALUES ('u1', 'alice', 'Alice', 'Bio text', ?)",
+            (now_str,),
+        )
+        conn.execute(
+            "INSERT INTO prospects (id, campaign_id, x_user_id, state, score, fit_reasons, created_at, updated_at) "
+            "VALUES (1, 1, 'u1', 'scored', 85, ?, ?, ?)",
+            (json.dumps({"why_fit": ["Fit quote"]}), now_str, now_str),
+        )
+        quotes = [
+            "Building AI models for robotics",
+            "building ai models for robotics",
+            "BUILDING   AI MODELS FOR ROBOTICS",
+            "Unique quote two here",
+            "Unique quote three here",
+            "Unique quote four here",
+            "Unique quote five should be excluded by max 4",
+        ]
+        for q in quotes:
+            conn.execute(
+                "INSERT INTO evidence (prospect_id, source, quote, url) VALUES (1, 'bio', ?, 'https://x.com')",
+                (q,),
+            )
+    conn.close()
+
+    with TestClient(app) as client:
+        resp = client.get("/campaigns/1?view=scored")
+        assert resp.status_code == 200
+        assert "Building AI models for robotics" in resp.text
+        assert "building ai models for robotics" not in resp.text
+        assert "BUILDING   AI MODELS FOR ROBOTICS" not in resp.text
+        assert "Unique quote two here" in resp.text
+        assert "Unique quote three here" in resp.text
+        assert "Unique quote four here" in resp.text
+        assert "Unique quote five should be excluded" not in resp.text
+
+
+def test_run_errors_are_listed_and_escaped(tmp_path, monkeypatch):
+    import json
+    from app.db import init_db
+
+    db_file = tmp_path / "web_run_errors.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    conn = connect(str(db_file))
+    init_db(conn)
+    now_str = "2026-11-14T10:00:00+00:00"
+
+    with db.transaction(conn):
+        conn.execute(
+            "INSERT INTO sender_accounts (id, x_user_id, username, daily_send_cap, created_at) "
+            "VALUES (1, 's1', 'sender_me', 20, ?)",
+            (now_str,),
+        )
+        conn.execute(
+            "INSERT INTO campaigns (id, sender_account_id, name, segment, budget_usd, created_at) "
+            "VALUES (1, 1, 'Error Run Camp', 'AI', 10.0, ?)",
+            (now_str,),
+        )
+        counts_data = {
+            "found": 5,
+            "scored": 2,
+            "screened": 3,
+            "left_discovered": 1,
+            "errors": [
+                {"username": "alice<script>", "error": "malformed <output> error"},
+            ],
+        }
+        conn.execute(
+            "INSERT INTO discovery_runs (id, campaign_id, status, started_at, finished_at, counts) "
+            "VALUES (1, 1, 'completed', ?, ?, ?)",
+            (now_str, now_str, json.dumps(counts_data)),
+        )
+    conn.close()
+
+    with TestClient(app) as client:
+        resp = client.get("/campaigns/1")
+        assert resp.status_code == 200
+        assert "@alice&lt;script&gt;: malformed &lt;output&gt; error" in resp.text
+        assert "<script>" not in resp.text
+        assert "<output>" not in resp.text
+

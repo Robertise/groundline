@@ -6,6 +6,7 @@ from app.clock import FrozenClock, iso
 from app.config import Settings
 from app.db import connect, init_db
 from app.discovery import run_discovery
+from app.llm.base import LLMResult
 from app.llm.fake import FakeLLM
 from app.x.base import XRateLimited
 from app.x.fixtures import FixtureReader
@@ -367,4 +368,124 @@ def test_tier1_reason_is_stored_on_filtered_prospects(disc_setup):
         assert data["tier1"]["pass"] is True
         assert "criteria" in data
         assert "why_fit" in data
+
+
+def test_malformed_output_for_one_prospect_does_not_stop_run(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn)
+
+    target_malformed_user = "demo_robotics_founder_sg"
+
+    class BadProspectLLM(FakeLLM):
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            res = super().call_tool(system, user, tool_name, tool_schema, max_tokens)
+            if tool_name == "score_user" and f'"username": "{target_malformed_user}"' in user:
+                return LLMResult(
+                    data={"criteria": ["role", "domain"]},
+                    input_tokens=150,
+                    output_tokens=60,
+                )
+            return res
+
+    llm = BadProspectLLM()
+    run_id = run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+    assert run_id > 0
+
+    cur = conn.execute(
+        "SELECT status, counts FROM discovery_runs WHERE id = ?", (run_id,)
+    )
+    run_row = cur.fetchone()
+    assert run_row["status"] == "completed"
+
+    counts = json.loads(run_row["counts"])
+    error_usernames = [e["username"] for e in counts.get("errors", [])]
+    assert target_malformed_user in error_usernames
+
+    cur_u = conn.execute(
+        "SELECT p.state FROM prospects p JOIN x_users u ON p.x_user_id = u.x_user_id WHERE u.username = ?",
+        (target_malformed_user,),
+    )
+    assert cur_u.fetchone()["state"] == "discovered"
+
+    cur_led = conn.execute(
+        "SELECT * FROM ledger WHERE detail LIKE ? AND run_id = ?",
+        ("%tier2_score_invalid:%", run_id),
+    )
+    invalid_rows = cur_led.fetchall()
+    assert len(invalid_rows) > 0
+
+
+def test_unexpected_exception_in_scoring_is_isolated(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn)
+
+    target_err_user = "demo_robotics_founder_sg"
+
+    class ExplodingLLM(FakeLLM):
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            if tool_name == "score_user" and f'"username": "{target_err_user}"' in user:
+                raise KeyError("unexpected key crash")
+            return super().call_tool(system, user, tool_name, tool_schema, max_tokens)
+
+    llm = ExplodingLLM()
+    run_id = run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+    assert run_id > 0
+
+    cur = conn.execute(
+        "SELECT status, counts FROM discovery_runs WHERE id = ?", (run_id,)
+    )
+    run_row = cur.fetchone()
+    assert run_row["status"] == "completed"
+
+    counts = json.loads(run_row["counts"])
+    err_entries = [e for e in counts.get("errors", []) if e["username"] == target_err_user]
+    assert len(err_entries) == 1
+    assert "KeyError" in err_entries[0]["error"]
+
+    cur_u = conn.execute(
+        "SELECT p.state FROM prospects p JOIN x_users u ON p.x_user_id = u.x_user_id WHERE u.username = ?",
+        (target_err_user,),
+    )
+    assert cur_u.fetchone()["state"] == "discovered"
+
+
+def test_budget_still_stops_run_inside_scoring_loop(disc_setup):
+    conn, settings, clock = disc_setup
+    conn.execute("UPDATE campaigns SET budget_usd = 0.08 WHERE id = 1")
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn)
+    llm = FakeLLM()
+
+    run_id = run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+    cur = conn.execute(
+        "SELECT status, counts, error FROM discovery_runs WHERE id = ?", (run_id,)
+    )
+    row = cur.fetchone()
+    assert row["status"] == "budget_reached"
+    assert "Budget exceeded" in row["error"]
+
+
+def test_audit_timestamps_advance_during_run(disc_setup):
+    from datetime import timedelta
+    conn, settings, _ = disc_setup
+
+    class AdvancingClock:
+        def __init__(self, start_dt):
+            self._current = start_dt
+
+        def now(self):
+            dt = self._current
+            self._current += timedelta(seconds=1)
+            return dt
+
+    clock = AdvancingClock(datetime(2026, 11, 14, 10, 0, 0, tzinfo=timezone.utc))
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn)
+    llm = FakeLLM()
+
+    run_id = run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+    assert run_id > 0
+
+    cur = conn.execute("SELECT created_at FROM audit_log WHERE entity = 'prospect'")
+    timestamps = [r["created_at"] for r in cur.fetchall()]
+    assert len(timestamps) > 1
+    assert len(set(timestamps)) > 1
 

@@ -6,7 +6,7 @@ import sqlite3
 from app import db, ledger
 from app.clock import iso
 from app.ledger import BudgetExceeded
-from app.llm.base import LLM, LLMError
+from app.llm.base import LLM, LLMError, LLMOutputError
 from app.scoring import screen_bios, score_user, INACTIVE_DAYS
 from app.state import transition, record_insert
 from app.x.base import XReader, XRateLimited, XAuthError, XUser
@@ -21,6 +21,7 @@ class RunCounts:
     scored: int = 0
     left_discovered: int = 0
     llm_errors: int = 0
+    errors: list[dict] = field(default_factory=list)
 
 
 def run_discovery(
@@ -32,9 +33,6 @@ def run_discovery(
     clock,
     simulated: bool,
 ) -> int:
-    now_dt = clock.now()
-    now_str = iso(now_dt)
-
     # 1. Check existing running run
     cur = conn.execute(
         "SELECT id, started_at FROM discovery_runs WHERE campaign_id = ? AND status = 'running' ORDER BY id DESC LIMIT 1",
@@ -45,13 +43,13 @@ def run_discovery(
         started_dt = datetime.fromisoformat(
             running_row["started_at"].replace("Z", "+00:00")
         )
-        if (now_dt - started_dt) < timedelta(minutes=30):
+        if (clock.now() - started_dt) < timedelta(minutes=30):
             raise RuntimeError("A discovery run is already in progress")
 
     with db.transaction(conn):
         cur = conn.execute(
             "INSERT INTO discovery_runs (campaign_id, status, started_at) VALUES (?, 'running', ?)",
-            (campaign_id, now_str),
+            (campaign_id, iso(clock.now())),
         )
         run_id = cur.lastrowid
 
@@ -103,7 +101,7 @@ def run_discovery(
                     1 if sender.protected else 0,
                     sender.location,
                     sender.followers_count,
-                    now_str,
+                    iso(clock.now()),
                 ),
             )
 
@@ -198,7 +196,7 @@ def run_discovery(
                         1 if u.protected else 0,
                         u.location,
                         u.followers_count,
-                        now_str,
+                        iso(clock.now()),
                     ),
                 )
 
@@ -214,7 +212,7 @@ def run_discovery(
                         text = excluded.text,
                         fetched_at = excluded.fetched_at
                     """,
-                    (p.id, p.author_id, p.text, p.created_at, url, now_str),
+                    (p.id, p.author_id, p.text, p.created_at, url, iso(clock.now())),
                 )
 
         for uid, u in all_candidates.items():
@@ -237,10 +235,10 @@ def run_discovery(
                     cur_ins = conn.execute(
                         "INSERT INTO prospects (campaign_id, x_user_id, state, sources, created_at, updated_at) "
                         "VALUES (?, ?, 'discovered', ?, ?, ?)",
-                        (campaign_id, uid, json.dumps(user_sources), now_str, now_str),
+                        (campaign_id, uid, json.dumps(user_sources), iso(clock.now()), iso(clock.now())),
                     )
                     pid = cur_ins.lastrowid
-                    record_insert(conn, "prospect", pid, "discovered", "system", now_str)
+                    record_insert(conn, "prospect", pid, "discovered", "system", iso(clock.now()))
                     counts.new_prospects += 1
 
         # 5. Apply hard filters in order for all discovered prospects
@@ -293,7 +291,7 @@ def run_discovery(
                         "discovered",
                         "filtered_out",
                         "system",
-                        now_str,
+                        iso(clock.now()),
                         reason=filter_reason,
                     )
                 counts.filtered[filter_reason] = counts.filtered.get(filter_reason, 0) + 1
@@ -324,14 +322,34 @@ def run_discovery(
                     llm_res.input_tokens,
                     llm_res.output_tokens,
                     settings,
-                    now_str,
+                    iso(clock.now()),
                     campaign_id=campaign_id,
                     run_id=run_id,
                     simulated=simulated,
                     detail="tier1_screen",
                 )
-            except LLMError as e:
+            except (BudgetExceeded, XRateLimited, XAuthError):
+                raise
+            except LLMOutputError as e:
+                ledger.record_llm(
+                    conn,
+                    e.input_tokens,
+                    e.output_tokens,
+                    settings,
+                    iso(clock.now()),
+                    campaign_id=campaign_id,
+                    run_id=run_id,
+                    simulated=simulated,
+                    detail="tier1_screen_invalid",
+                )
                 counts.llm_errors += len(batch_users)
+                for u in batch_users:
+                    counts.errors.append({"username": u.username, "error": "invalid model output"})
+                continue
+            except Exception as e:
+                counts.llm_errors += len(batch_users)
+                for u in batch_users:
+                    counts.errors.append({"username": u.username, "error": repr(e)[:300]})
                 continue
 
             counts.screened += len(batch_users)
@@ -366,7 +384,7 @@ def run_discovery(
                             "discovered",
                             "filtered_out",
                             "system",
-                            now_str,
+                            iso(clock.now()),
                             reason=fail_reason,
                             fit_reasons=t1_fit_reasons,
                         )
@@ -401,7 +419,7 @@ def run_discovery(
             needs_fetch = True
             if posts_fetched_at_str:
                 pf_dt = datetime.fromisoformat(posts_fetched_at_str.replace("Z", "+00:00"))
-                if (now_dt - pf_dt) < timedelta(days=7):
+                if (clock.now() - pf_dt) < timedelta(days=7):
                     needs_fetch = False
 
             user_posts_list = []
@@ -417,12 +435,12 @@ def run_discovery(
                             VALUES (?, ?, ?, ?, ?, ?)
                             ON CONFLICT(post_id) DO UPDATE SET text = excluded.text, fetched_at = excluded.fetched_at
                             """,
-                            (p.id, uid, p.text, p.created_at, p_url, now_str),
+                            (p.id, uid, p.text, p.created_at, p_url, iso(clock.now())),
                         )
                 with db.transaction(conn):
                     conn.execute(
                         "UPDATE x_users SET posts_fetched_at = ? WHERE x_user_id = ?",
-                        (now_str, uid),
+                        (iso(clock.now()), uid),
                     )
             else:
                 cur_existing_posts = conn.execute(
@@ -445,7 +463,7 @@ def run_discovery(
             for p in user_posts_list:
                 try:
                     p_dt = datetime.fromisoformat(p.created_at.replace("Z", "+00:00"))
-                    if (now_dt - p_dt) <= timedelta(days=INACTIVE_DAYS):
+                    if (clock.now() - p_dt) <= timedelta(days=INACTIVE_DAYS):
                         has_recent_post = True
                         break
                 except Exception:
@@ -460,7 +478,7 @@ def run_discovery(
                         "discovered",
                         "filtered_out",
                         "system",
-                        now_str,
+                        iso(clock.now()),
                         reason="inactive",
                     )
                 counts.filtered["inactive"] = counts.filtered.get("inactive", 0) + 1
@@ -470,21 +488,38 @@ def run_discovery(
             ledger.ensure_budget(conn, campaign_id, budget_usd, 0.015, simulated)
             try:
                 score_res, score_llm_res = score_user(
-                    llm, campaign["segment"], u_obj, user_posts_list, now_dt
+                    llm, campaign["segment"], u_obj, user_posts_list, clock.now()
                 )
                 ledger.record_llm(
                     conn,
                     score_llm_res.input_tokens,
                     score_llm_res.output_tokens,
                     settings,
-                    now_str,
+                    iso(clock.now()),
                     campaign_id=campaign_id,
                     run_id=run_id,
                     simulated=simulated,
                     detail=f"tier2_score:{uid}",
                 )
-            except LLMError as e:
+            except (BudgetExceeded, XRateLimited, XAuthError):
+                raise
+            except LLMOutputError as e:
+                ledger.record_llm(
+                    conn,
+                    e.input_tokens,
+                    e.output_tokens,
+                    settings,
+                    iso(clock.now()),
+                    campaign_id=campaign_id,
+                    run_id=run_id,
+                    simulated=simulated,
+                    detail=f"tier2_score_invalid:{uid}",
+                )
+                counts.errors.append({"username": u_obj.username, "error": "invalid model output"})
+                continue
+            except Exception as e:
                 counts.llm_errors += 1
+                counts.errors.append({"username": u_obj.username, "error": repr(e)[:300]})
                 continue
 
             # Insert evidence rows
@@ -522,7 +557,7 @@ def run_discovery(
                     "discovered",
                     "scored",
                     "system",
-                    now_str,
+                    iso(clock.now()),
                     score=score_res["score"],
                     fit_reasons=fit_reasons_json,
                     segment=score_res["segment"],
@@ -540,7 +575,7 @@ def run_discovery(
                         "scored",
                         "filtered_out",
                         "system",
-                        now_str,
+                        iso(clock.now()),
                         reason="low_score",
                     )
                 counts.filtered["low_score"] = counts.filtered.get("low_score", 0) + 1
