@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     llm_input_usd_per_mtok: float = 1.0  # verify against Bedrock pricing; shown as an estimate
     llm_output_usd_per_mtok: float = 5.0
     fixtures_path: str = "./fixtures/demo_x.json"
+    live_allowed_handles: str = ""  # comma-separated usernames; when set, live mode sends only to these
 
     @field_validator("mode")
     @classmethod

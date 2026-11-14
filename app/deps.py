@@ -13,6 +13,8 @@ from app.llm.fake import FakeLLM
 from app.x.base import XReader, XAuthError
 from app.x.client import XClient
 from app.x.fixtures import FixtureReader
+from app.x.mock import MockTransport
+from app.x.dm import XDMTransport
 
 
 def get_conn(
@@ -102,3 +104,25 @@ def build_llm(settings: Settings) -> LLM:
             session_token=settings.aws_session_token,
             profile=settings.aws_profile,
         )
+
+
+def build_transport(conn: sqlite3.Connection, settings: Settings, clock):
+    if settings.mode == "mock":
+        return MockTransport()
+    if settings.mode == "dry_run":
+        raise RuntimeError("dry_run mode never sends")
+    sender_row = current_sender(conn, settings)
+    if not sender_row:
+        raise XAuthError(401, "no_sender", "No connected X sender account")
+    cipher = TokenCipher(settings.secret_key)
+    client = XClient(conn, sender_row["id"], cipher, settings, clock)
+    handles = [h.strip().lstrip("@").lower() for h in settings.live_allowed_handles.split(",") if h.strip()]
+    allowed_ids = None
+    if handles:
+        placeholders = ",".join("?" for _ in handles)
+        cur = conn.execute(
+            f"SELECT x_user_id FROM x_users WHERE lower(username) IN ({placeholders})", handles
+        )
+        allowed_ids = {r["x_user_id"] for r in cur.fetchall()}
+    return XDMTransport(client, allowed_ids)
+
