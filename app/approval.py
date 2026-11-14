@@ -158,6 +158,16 @@ def mark_replied(
         transition(conn, "outreach", outreach_id, "sent", "replied", actor, now)
 
 
+def mark_replied_with_note(conn: sqlite3.Connection, outreach_id: int, note: str, now: str) -> None:
+    with db.transaction(conn):
+        transition(conn, "outreach", outreach_id, "sent", "replied", "human", now)
+        conn.execute(
+            "INSERT INTO replies (outreach_id, x_event_id, text, classification, handled, created_at) "
+            "VALUES (?, NULL, ?, NULL, 0, ?)",
+            (outreach_id, note.strip()[:2000], now),
+        )
+
+
 def add_suppression(
     conn: sqlite3.Connection, x_user_id: str, reason: str, source: str, now: str
 ) -> None:

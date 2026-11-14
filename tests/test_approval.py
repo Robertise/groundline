@@ -6,6 +6,7 @@ from app.approval import (
     cancel_approval,
     reapprove,
     add_suppression,
+    mark_replied_with_note,
     AlreadyContacted,
     Suppressed,
 )
@@ -134,3 +135,28 @@ def test_cancel_and_reapprove_reuse_the_same_outreach_row(conn, clock):
     reapprove(conn, outreach_id, now_str)
     cur = conn.execute("SELECT state FROM outreach WHERE id = ?", (outreach_id,))
     assert cur.fetchone()["state"] == "approved"
+
+
+def test_mark_replied_with_note_stores_note_and_moves_state(conn, clock):
+    from app.state import transition
+    seeded = seed(conn, clock, n_recipients=1)
+    prospect_id = seeded.prospect_ids[0]
+    now_str = iso(clock.now())
+
+    outreach_id = approve_prospect(conn, prospect_id, "Message", now_str)
+    with db.transaction(conn):
+        transition(conn, "outreach", outreach_id, "approved", "sending", "system", now_str)
+        transition(conn, "outreach", outreach_id, "sending", "sent", "system", now_str, sent_at=now_str)
+
+    mark_replied_with_note(conn, outreach_id, "Sounds great! Let's talk.", now_str)
+
+    cur = conn.execute("SELECT state FROM outreach WHERE id = ?", (outreach_id,))
+    assert cur.fetchone()["state"] == "replied"
+
+    cur_r = conn.execute("SELECT * FROM replies WHERE outreach_id = ?", (outreach_id,))
+    reply = cur_r.fetchone()
+    assert reply is not None
+    assert reply["text"] == "Sounds great! Let's talk."
+    assert reply["handled"] == 0
+    assert reply["created_at"] == now_str
+
