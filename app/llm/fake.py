@@ -201,6 +201,18 @@ class FakeLLM:
             for prof in profiles:
                 bio = prof.get("bio", "")
                 post = prof.get("post", "")
+                loc = prof.get("location", "") or ""
+                loc_lower = loc.lower()
+                if any(sl in loc_lower for sl in SEA_LOCATIONS):
+                    segment_match = "match"
+                    segment_quote = loc.strip()
+                elif loc.strip():
+                    segment_match = "mismatch"
+                    segment_quote = loc.strip()
+                else:
+                    segment_match = "unknown"
+                    segment_quote = ""
+
                 combined = f"{bio} {post}".lower()
 
                 has_pass = any(kw in combined for kw in TIER1_PASS_KEYWORDS)
@@ -219,6 +231,8 @@ class FakeLLM:
                             "pass": True,
                             "reason": "Profile matches AI or robotics builder criteria",
                             "quote": quote,
+                            "segment_match": segment_match,
+                            "segment_quote": segment_quote,
                         }
                     )
                 else:
@@ -228,6 +242,8 @@ class FakeLLM:
                             "pass": False,
                             "reason": "Profile does not show AI or robotics work",
                             "quote": "",
+                            "segment_match": segment_match,
+                            "segment_quote": segment_quote,
                         }
                     )
             return LLMResult(

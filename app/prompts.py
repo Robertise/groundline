@@ -12,6 +12,17 @@ Rules:
   profiles without evidence.
 - For every pass, copy one exact quote of 5 to 25 words from the bio or the post, character for character.
 - Never infer or mention health, religion, politics, ethnicity, sexuality or other sensitive traits.
+- The target segment must not change pass or fail. Decide pass only on AI or robotics work.
+- The reason explains pass or fail only. Do not mention location or the target segment in the reason.
+- Separately, report segment_match for every profile against the target segment given by the team
+  (for example a region):
+  "match": the location field or the bio shows the person fits it.
+  "mismatch": the location field or the bio clearly states something outside it, for example a location in
+  another region.
+  "unknown": they do not say. An empty or vague location (for example "Earth" or "Internet") is "unknown",
+  never "mismatch". Missing information is "unknown", never "mismatch".
+- For "match" or "mismatch", copy into segment_quote the exact text from the location field or the bio that
+  shows it, character for character. For "unknown", segment_quote is an empty string.
 - Return one result for every profile id you were given, by calling the tool."""
 
 BIO_SCREEN_TOOL = {
@@ -26,8 +37,17 @@ BIO_SCREEN_TOOL = {
                     "pass": {"type": "boolean"},
                     "reason": {"type": "string", "maxLength": 140},
                     "quote": {"type": "string"},
+                    "segment_match": {"type": "string", "enum": ["match", "mismatch", "unknown"]},
+                    "segment_quote": {"type": "string"},
                 },
-                "required": ["x_user_id", "pass", "reason", "quote"],
+                "required": [
+                    "x_user_id",
+                    "pass",
+                    "reason",
+                    "quote",
+                    "segment_match",
+                    "segment_quote",
+                ],
             },
         }
     },

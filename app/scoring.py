@@ -127,10 +127,25 @@ def screen_bios(
                 is_pass = False
                 reason = "unsupported_quote"
 
+        raw_status = r.get("segment_match")
+        raw_sq = r.get("segment_quote")
+        segment_status = "unknown"
+        segment_evidence = []
+        if raw_status in ("match", "mismatch") and isinstance(raw_sq, str) and raw_sq.strip():
+            profile_url = f"https://x.com/{u.username.lstrip('@')}"
+            if quote_is_supported(raw_sq, u.location or "", min_len=3):
+                segment_status = raw_status
+                segment_evidence = [{"source": "location", "quote": raw_sq, "url": profile_url}]
+            elif quote_is_supported(raw_sq, u.bio or ""):
+                segment_status = raw_status
+                segment_evidence = [{"source": "bio", "quote": raw_sq, "url": profile_url}]
+
         verified_results[uid] = {
             "pass": is_pass,
             "reason": reason,
             "quote": quote,
+            "segment_status": segment_status,
+            "segment_evidence": segment_evidence,
         }
 
     total_result = LLMResult(

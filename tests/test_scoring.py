@@ -4,6 +4,7 @@ import pytest
 
 from app.llm.base import LLMResult, LLMError, LLMOutputError
 from app.llm.bedrock import BedrockLLM
+from app.prompts import BIO_SCREEN_SYSTEM
 from app.scoring import compute_score, score_user, screen_bios, WEIGHTS
 from app.x.base import XUser, XPost
 
@@ -430,3 +431,136 @@ def test_campaign_fit_criterion_from_model_is_ignored():
     assert res["segment_status"] == "unknown"
     assert res["criteria"]["campaign_fit"]["met"] is False
     assert res["criteria"]["campaign_fit"]["evidence"] == []
+
+
+def test_tier1_mismatch_with_location_quote_is_mismatch():
+    class StubLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "results": [
+                        {
+                            "x_user_id": "u1",
+                            "pass": True,
+                            "reason": "AI and robotics builder",
+                            "quote": "Building LLM agents and robotics tools for developers every day",
+                            "segment_match": "mismatch",
+                            "segment_quote": "San Francisco, CA",
+                        }
+                    ]
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    user = XUser(
+        id="u1",
+        username="sf_builder",
+        bio="Building LLM agents and robotics tools for developers every day",
+        location="San Francisco, CA",
+    )
+    res, _ = screen_bios(StubLLM(), "Southeast Asia", [user], {})
+    assert res["u1"]["pass"] is True
+    assert res["u1"]["segment_status"] == "mismatch"
+    assert len(res["u1"]["segment_evidence"]) == 1
+    assert res["u1"]["segment_evidence"][0]["source"] == "location"
+    assert res["u1"]["segment_evidence"][0]["quote"] == "San Francisco, CA"
+    assert res["u1"]["segment_evidence"][0]["url"] == "https://x.com/sf_builder"
+
+
+def test_tier1_mismatch_with_unsupported_quote_is_unknown():
+    class StubLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "results": [
+                        {
+                            "x_user_id": "u1",
+                            "pass": True,
+                            "reason": "AI and robotics builder",
+                            "quote": "Building LLM agents and robotics tools for developers every day",
+                            "segment_match": "mismatch",
+                            "segment_quote": "Berlin, Germany",
+                        }
+                    ]
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    user = XUser(
+        id="u1",
+        username="berlin_hallucinated",
+        bio="Building LLM agents and robotics tools for developers every day",
+        location="",
+    )
+    res, _ = screen_bios(StubLLM(), "Southeast Asia", [user], {})
+    assert res["u1"]["pass"] is True
+    assert res["u1"]["segment_status"] == "unknown"
+    assert res["u1"]["segment_evidence"] == []
+
+
+def test_tier1_missing_segment_fields_default_to_unknown():
+    class StubLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "results": [
+                        {
+                            "x_user_id": "u1",
+                            "pass": True,
+                            "reason": "AI and robotics builder",
+                            "quote": "Building LLM agents and robotics tools for developers every day",
+                        }
+                    ]
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    user = XUser(
+        id="u1",
+        username="missing_fields",
+        bio="Building LLM agents and robotics tools for developers every day",
+        location="San Francisco, CA",
+    )
+    res, _ = screen_bios(StubLLM(), "Southeast Asia", [user], {})
+    assert res["u1"]["pass"] is True
+    assert res["u1"]["segment_status"] == "unknown"
+    assert res["u1"]["segment_evidence"] == []
+
+
+def test_tier1_short_quote_is_checked_against_location_only():
+    class StubLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            return LLMResult(
+                data={
+                    "results": [
+                        {
+                            "x_user_id": "u1",
+                            "pass": True,
+                            "reason": "AI and robotics builder",
+                            "quote": "Building LLM agents and robotics tools for developers every day",
+                            "segment_match": "mismatch",
+                            "segment_quote": "USA",
+                        }
+                    ]
+                },
+                input_tokens=100,
+                output_tokens=50,
+            )
+
+    user = XUser(
+        id="u1",
+        username="short_quote",
+        bio="Building LLM agents and robotics tools for developers every day in USA",
+        location="",
+    )
+    res, _ = screen_bios(StubLLM(), "Southeast Asia", [user], {})
+    assert res["u1"]["pass"] is True
+    assert res["u1"]["segment_status"] == "unknown"
+    assert res["u1"]["segment_evidence"] == []
+
+
+def test_tier1_prompt_says_segment_must_not_change_pass():
+    assert "The target segment must not change pass or fail" in BIO_SCREEN_SYSTEM
