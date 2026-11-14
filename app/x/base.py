@@ -78,6 +78,9 @@ class XAuthError(XApiError):
 
 
 class XReader(Protocol):
+    def set_cost_context(
+        self, campaign_id: int | None, run_id: int | None
+    ) -> None: ...
     def me(self) -> XUser: ...
     def users_by_usernames(self, usernames: list[str]) -> list[XUser]: ...
     def search_recent(

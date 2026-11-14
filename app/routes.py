@@ -322,6 +322,7 @@ def campaign_detail(
         if isinstance(why_fit, str):
             why_fit = [why_fit]
         p_dict["why_fit_lines"] = why_fit
+        p_dict["fit_reasons"] = fit_data
 
         sources_list = []
         if p["sources"]:

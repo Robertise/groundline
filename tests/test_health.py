@@ -12,6 +12,7 @@ from tests.conftest import seed, approve_all
 def test_health_endpoint_reports_mode(tmp_path, monkeypatch):
     db_file = tmp_path / "health.db"
     monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
 
     with TestClient(app) as client:
         resp = client.get("/health")

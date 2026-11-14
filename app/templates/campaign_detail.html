@@ -146,6 +146,9 @@
           {% if p.state_reason %}
             <br><small style="color: #4b5563;">{{ plain_reasons.get(p.state_reason, p.state_reason) }}</small>
           {% endif %}
+          {% if p.fit_reasons and p.fit_reasons.tier1 and p.fit_reasons.tier1.reason %}
+            <br><small style="color: #6b7280;">Model: {{ p.fit_reasons.tier1.reason }}</small>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

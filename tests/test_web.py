@@ -202,3 +202,93 @@ def test_connect_is_refused_in_mock_mode(tmp_path, monkeypatch):
         resp = client.get("/connect")
         assert resp.status_code == 400
         assert "Connect X is disabled in Mock mode" in resp.text
+
+
+def test_run_via_page_records_campaign_spend(tmp_path, monkeypatch):
+    db_file = tmp_path / "web_spend.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    with TestClient(app) as client:
+        create_resp = client.post(
+            "/campaigns",
+            data={
+                "name": "AI Founders Spend Camp",
+                "segment": "AI and robotics",
+                "brief": "Meeting founders",
+                "search_keywords": "robot, LLM, agent",
+                "seed_handles": "demo_seed_investor",
+                "include_sender_followers": "1",
+                "search_max_posts": "50",
+                "seed_following_max": "50",
+                "followers_max": "50",
+                "max_deep_profiles": "40",
+                "min_score": "60",
+                "budget_usd": "10.0",
+            },
+            follow_redirects=True,
+        )
+        assert create_resp.status_code == 200
+
+        run_resp = client.post("/campaigns/1/run", follow_redirects=True)
+        assert run_resp.status_code == 200
+
+        conn = connect(str(db_file))
+        cur = conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM ledger WHERE campaign_id = 1"
+        )
+        total_spent = cur.fetchone()[0]
+        conn.close()
+
+        assert total_spent > 0
+        spent_formatted = f"${total_spent:.4f}"
+        assert f"Spent so far:</strong> {spent_formatted}" in run_resp.text
+
+
+def test_model_reason_is_shown_and_escaped(tmp_path, monkeypatch):
+    from app.llm.fake import FakeLLM
+
+    db_file = tmp_path / "web_escape.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    class StubLLM(FakeLLM):
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            res = super().call_tool(system, user, tool_name, tool_schema, max_tokens)
+            if "Profiles (JSON):" in user and "results" in res.data:
+                for r in res.data["results"]:
+                    r["pass"] = False
+                    r["reason"] = "<b>x</b>"
+                    r["quote"] = ""
+            return res
+
+    monkeypatch.setattr("app.routes.build_llm", lambda s: StubLLM())
+
+    with TestClient(app) as client:
+        create_resp = client.post(
+            "/campaigns",
+            data={
+                "name": "Campaign Escape Test",
+                "segment": "AI and robotics",
+                "brief": "Meeting founders",
+                "search_keywords": "robot, LLM, agent",
+                "seed_handles": "",
+                "search_max_posts": "10",
+                "seed_following_max": "50",
+                "followers_max": "50",
+                "max_deep_profiles": "10",
+                "min_score": "60",
+                "budget_usd": "10.0",
+            },
+            follow_redirects=True,
+        )
+        assert create_resp.status_code == 200
+
+        run_resp = client.post("/campaigns/1/run", follow_redirects=True)
+        assert run_resp.status_code == 200
+
+        filtered_page = client.get("/campaigns/1?view=filtered")
+        assert filtered_page.status_code == 200
+        assert "&lt;b&gt;x&lt;/b&gt;" in filtered_page.text
+        assert "<b>x</b>" not in filtered_page.text
+

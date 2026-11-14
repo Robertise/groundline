@@ -35,6 +35,9 @@ class FixtureReader:
             self._users_by_id[sender["id"]] = sender
             self._users_by_username[sender["username"].lower()] = sender
 
+    def set_cost_context(self, campaign_id: int | None, run_id: int | None) -> None:
+        self.cost_context = {"campaign_id": campaign_id, "run_id": run_id}
+
     def _record_cost(self, endpoint: str, count: int) -> None:
         if not self.conn or count <= 0:
             return

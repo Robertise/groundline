@@ -303,3 +303,68 @@ def test_profile_text_is_sent_as_json_data(disc_setup):
             header, json_part = user.split("User (JSON):\n")
             data = json.loads(json_part)
             assert isinstance(data, dict)
+
+
+def test_x_costs_are_attributed_to_campaign_and_run(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn)
+    llm = FakeLLM()
+
+    run_id = run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+    assert run_id > 0
+
+    cur = conn.execute("SELECT campaign_id, run_id, endpoint FROM ledger")
+    rows = cur.fetchall()
+    assert len(rows) > 0
+    for r in rows:
+        assert r["campaign_id"] == 1
+        assert r["run_id"] == run_id
+
+
+def test_budget_counts_x_costs_when_reader_has_no_context(disc_setup):
+    conn, settings, clock = disc_setup
+    conn.execute("UPDATE campaigns SET budget_usd = 0.05 WHERE id = 1")
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn)
+    llm = FakeLLM()
+
+    run_id = run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+    cur = conn.execute(
+        "SELECT status, counts, error FROM discovery_runs WHERE id = ?", (run_id,)
+    )
+    row = cur.fetchone()
+    assert row["status"] == "budget_reached"
+    assert row["error"] is not None
+
+
+def test_tier1_reason_is_stored_on_filtered_prospects(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn)
+    llm = FakeLLM()
+
+    run_id = run_discovery(conn, 1, reader, llm, settings, clock, simulated=True)
+    assert run_id > 0
+
+    cur = conn.execute(
+        "SELECT id, state_reason, fit_reasons FROM prospects WHERE campaign_id = 1 AND state_reason IN ('bio_screen_failed', 'unsupported_quote')"
+    )
+    filtered = cur.fetchall()
+    assert len(filtered) > 0
+    for r in filtered:
+        assert r["fit_reasons"] is not None
+        data = json.loads(r["fit_reasons"])
+        assert "tier1" in data
+        assert data["tier1"]["pass"] is False
+        assert len(data["tier1"]["reason"]) > 0
+
+    cur_scored = conn.execute(
+        "SELECT id, fit_reasons FROM prospects WHERE campaign_id = 1 AND state = 'scored'"
+    )
+    scored = cur_scored.fetchall()
+    assert len(scored) > 0
+    for r in scored:
+        data = json.loads(r["fit_reasons"])
+        assert "tier1" in data
+        assert data["tier1"]["pass"] is True
+        assert "criteria" in data
+        assert "why_fit" in data
+

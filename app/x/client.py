@@ -73,6 +73,9 @@ class XClient:
         except Exception as e:
             raise XAuthError(401, "invalid_tokens", f"Failed to decrypt tokens: {e}") from e
 
+    def set_cost_context(self, campaign_id: int | None, run_id: int | None) -> None:
+        self.cost_context = {"campaign_id": campaign_id, "run_id": run_id}
+
     def _record_cost(self, endpoint: str, count: int) -> None:
         if count <= 0:
             return

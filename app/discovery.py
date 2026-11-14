@@ -55,6 +55,8 @@ def run_discovery(
         )
         run_id = cur.lastrowid
 
+    reader.set_cost_context(campaign_id, run_id)
+
     counts = RunCounts()
     end_status = "completed"
     error_msg = None
@@ -339,12 +341,22 @@ def run_discovery(
                 if not res:
                     continue
                 if res["pass"]:
-                    passed_tier1.append((r["id"], r["x_user_id"], res["quote"]))
+                    passed_tier1.append((r["id"], r["x_user_id"], res))
                 else:
                     fail_reason = (
                         "unsupported_quote"
                         if res.get("reason") == "unsupported_quote"
                         else "bio_screen_failed"
+                    )
+                    t1_fit_reasons = json.dumps(
+                        {
+                            "tier1": {
+                                "pass": False,
+                                "reason": res.get("reason", ""),
+                                "quote": res.get("quote", ""),
+                            }
+                        },
+                        ensure_ascii=False,
                     )
                     with db.transaction(conn):
                         transition(
@@ -356,6 +368,7 @@ def run_discovery(
                             "system",
                             now_str,
                             reason=fail_reason,
+                            fit_reasons=t1_fit_reasons,
                         )
                     counts.filtered[fail_reason] = counts.filtered.get(fail_reason, 0) + 1
 
@@ -374,7 +387,7 @@ def run_discovery(
         beyond_max = passed_tier1[max_deep:]
         counts.left_discovered = len(beyond_max)
 
-        for pid, uid, t1_quote in deep_candidates:
+        for pid, uid, t1_res in deep_candidates:
             u_obj = all_candidates.get(uid)
             if not u_obj:
                 continue
@@ -493,6 +506,11 @@ def run_discovery(
                 {
                     "criteria": score_res["criteria"],
                     "why_fit": score_res["why_fit"],
+                    "tier1": {
+                        "pass": True,
+                        "reason": t1_res.get("reason", ""),
+                        "quote": t1_res.get("quote", ""),
+                    },
                 },
                 ensure_ascii=False,
             )
