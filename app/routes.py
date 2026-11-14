@@ -10,6 +10,7 @@ from app.clock import SystemClock, iso
 from app.config import Settings, get_settings, missing_live_settings
 from app.deps import build_llm, build_reader, current_sender, get_conn
 from app.discovery import run_discovery
+from app.evidence import normalize
 from app.ledger import estimate_campaign_max_cost, spent
 from app import db
 
@@ -336,7 +337,17 @@ def campaign_detail(
             "SELECT source, post_id, quote, url FROM evidence WHERE prospect_id = ?",
             (p["id"],),
         )
-        p_dict["evidence_items"] = [dict(ev) for ev in ev_cur.fetchall()]
+        raw_ev = [dict(ev) for ev in ev_cur.fetchall()]
+        deduped_ev = []
+        seen_quotes = set()
+        for ev in raw_ev:
+            norm_q = normalize(ev.get("quote", ""))
+            if norm_q not in seen_quotes:
+                seen_quotes.add(norm_q)
+                deduped_ev.append(ev)
+                if len(deduped_ev) == 4:
+                    break
+        p_dict["evidence_items"] = deduped_ev
         prospects.append(p_dict)
 
     ctx = _common_context(request, conn, settings, msg, error)
