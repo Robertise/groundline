@@ -7,7 +7,7 @@ from app import db, ledger
 from app.clock import iso
 from app.ledger import BudgetExceeded
 from app.llm.base import LLM, LLMError, LLMOutputError
-from app.scoring import screen_bios, score_user, INACTIVE_DAYS
+from app.scoring import screen_bios, score_user, INACTIVE_DAYS, TIER1_BATCH_SIZE
 from app.state import transition, record_insert
 from app.x.base import XReader, XRateLimited, XAuthError, XUser
 
@@ -300,8 +300,8 @@ def run_discovery(
 
         # 6. Tier 1: Screen bios in batches of 20
         passed_tier1 = []
-        for i in range(0, len(passed_hard_filters), 20):
-            batch_rows = passed_hard_filters[i : i + 20]
+        for i in range(0, len(passed_hard_filters), TIER1_BATCH_SIZE):
+            batch_rows = passed_hard_filters[i : i + TIER1_BATCH_SIZE]
             batch_users = [
                 all_candidates.get(
                     r["x_user_id"],
@@ -352,11 +352,13 @@ def run_discovery(
                     counts.errors.append({"username": u.username, "error": repr(e)[:300]})
                 continue
 
-            counts.screened += len(batch_users)
+            counts.screened += len(screen_results)
 
             for r in batch_rows:
                 res = screen_results.get(r["x_user_id"])
                 if not res:
+                    counts.llm_errors += 1
+                    counts.errors.append({"username": r["username"], "error": "no screening result"})
                     continue
                 if res["pass"]:
                     if res.get("segment_status") == "mismatch" and res.get("segment_evidence"):

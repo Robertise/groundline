@@ -6,7 +6,7 @@ from app.clock import FrozenClock, iso
 from app.config import Settings
 from app.db import connect, init_db
 from app.discovery import run_discovery
-from app.llm.base import LLMResult
+from app.llm.base import LLMResult, LLMOutputError
 from app.llm.fake import FakeLLM
 from app.x.base import XUser, XPost, XRateLimited
 from app.x.fixtures import FixtureReader
@@ -756,3 +756,74 @@ def test_tier2_still_filters_mismatch_when_tier1_is_unknown(disc_setup):
         for r in audit_rows
     )
 
+
+
+def test_profile_without_screening_result_is_reported_not_hidden(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn, cost_context={"campaign_id": 1})
+
+    target = "demo_robotics_founder_sg"
+
+    answered_ids = set()
+
+    class MissingResultLLM(FakeLLM):
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            res = super().call_tool(system, user, tool_name, tool_schema, max_tokens)
+            if "Profiles (JSON):" in user:
+                data = dict(res.data)
+                results = [r for r in data.get("results", []) if r.get("x_user_id") != "9100000000000000101"]
+                data["results"] = results
+                answered_ids.update(r["x_user_id"] for r in results)
+                return LLMResult(data=data, input_tokens=res.input_tokens, output_tokens=res.output_tokens)
+            return res
+
+    run_id = run_discovery(conn, 1, reader, MissingResultLLM(), settings, clock, simulated=True)
+
+    cur = conn.execute("SELECT counts FROM discovery_runs WHERE id = ?", (run_id,))
+    counts = json.loads(cur.fetchone()["counts"])
+
+    # The prospect must stay discovered (not silently skipped)
+    cur_p = conn.execute(
+        """
+        SELECT p.state FROM prospects p
+        JOIN x_users u ON p.x_user_id = u.x_user_id
+        WHERE p.campaign_id = 1 AND u.username = ?
+        """,
+        (target,),
+    )
+    row = cur_p.fetchone()
+    assert row is not None
+    assert row["state"] == "discovered", f"Expected discovered, got {row['state']}"
+
+    # The error must be recorded
+    error_usernames = [e["username"] for e in counts.get("errors", [])]
+    assert target in error_usernames, f"{target} not in errors: {counts.get('errors')}"
+
+    no_result_errors = [e for e in counts.get("errors", []) if e.get("error") == "no screening result" and e["username"] == target]
+    assert len(no_result_errors) >= 1
+
+    assert counts.get("llm_errors", 0) >= 1
+
+    # screened counts only the profiles that got a screening result
+    assert counts["screened"] == len(answered_ids)
+    assert "9100000000000000101" not in answered_ids
+
+
+def test_tier1_calls_hold_at_most_eight_profiles(disc_setup):
+    conn, settings, clock = disc_setup
+    reader = FixtureReader(settings.fixtures_path, clock, conn=conn, cost_context={"campaign_id": 1})
+
+    tier1_call_sizes = []
+
+    class RecordingLLM(FakeLLM):
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            if "Profiles (JSON):" in user:
+                _, json_part = user.split("Profiles (JSON):\n", 1)
+                profiles = json.loads(json_part)
+                tier1_call_sizes.append(len(profiles))
+            return super().call_tool(system, user, tool_name, tool_schema, max_tokens)
+
+    run_discovery(conn, 1, reader, RecordingLLM(), settings, clock, simulated=True)
+
+    assert len(tier1_call_sizes) > 1, f"Expected more than 1 tier-1 call, got {tier1_call_sizes}"
+    assert all(s <= 8 for s in tier1_call_sizes), f"A tier-1 call exceeded 8 profiles: {tier1_call_sizes}"

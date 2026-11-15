@@ -179,8 +179,8 @@ def estimate_campaign_max_cost(campaign_row, settings) -> dict:
     x_usd = handles_cost + search_cost + seeds_cost + followers_cost + posts_cost
 
     candidates = num_handles + search_max + (num_seeds * seed_following_max) + followers_max
-    tier1_calls = math.ceil(candidates / 20.0) if candidates > 0 else 0
-    tier1_in = tier1_calls * 3000 * (settings.llm_input_usd_per_mtok / 1_000_000.0)
+    tier1_calls = math.ceil(candidates / 8.0) if candidates > 0 else 0  # 8 = scoring.TIER1_BATCH_SIZE
+    tier1_in = tier1_calls * 1500 * (settings.llm_input_usd_per_mtok / 1_000_000.0)
     tier1_out = tier1_calls * 1500 * (settings.llm_output_usd_per_mtok / 1_000_000.0)
 
     tier2_calls = max_deep
