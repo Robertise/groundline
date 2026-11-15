@@ -478,3 +478,162 @@ def test_segment_status_and_outside_segment_reason_are_shown(tmp_path, monkeypat
         assert "<script>alert('xss')</script>" not in filtered_resp.text
         assert "&lt;script&gt;alert(" in filtered_resp.text
 
+
+def test_missing_settings_banner_names_the_env_variables(tmp_path, monkeypatch):
+    db_file = tmp_path / "web_missing_settings.db"
+    monkeypatch.setenv("GROUNDLINE_MODE", "dry_run")
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_X_CLIENT_ID", "")
+    monkeypatch.setenv("GROUNDLINE_X_CLIENT_SECRET", "")
+    monkeypatch.setenv("GROUNDLINE_SECRET_KEY", "")
+
+    with TestClient(app) as client:
+        resp = client.get("/campaigns")
+        assert resp.status_code == 200
+        assert "Setup incomplete." in resp.text
+        assert "GROUNDLINE_X_CLIENT_ID" in resp.text
+
+
+def test_short_time_formats_iso_in_the_configured_zone(monkeypatch):
+    from app.routes import short_time
+
+    monkeypatch.setenv("GROUNDLINE_TIMEZONE", "Asia/Ho_Chi_Minh")
+    assert short_time("2026-11-15T08:10:06.050004Z") == "2026-11-15 15:10"
+    assert short_time(None) == ""
+    assert short_time("not a time") == "not a time"
+
+
+def test_empty_campaign_list_shows_get_started(tmp_path, monkeypatch):
+    db_file = tmp_path / "web_empty_campaigns.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    with TestClient(app) as client:
+        resp = client.get("/campaigns")
+        assert resp.status_code == 200
+        assert "Get started" in resp.text
+        assert "demo_seed_investor" in resp.text
+
+
+def test_campaign_page_shows_steps_next_step_and_filter_summary(tmp_path, monkeypatch):
+    db_file = tmp_path / "web_campaign_steps.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    with TestClient(app) as client:
+        client.post(
+            "/campaigns",
+            data={
+                "name": "Steps Campaign",
+                "segment": "AI and robotics",
+                "search_keywords": "robot, LLM, agent",
+                "seed_handles": "demo_seed_investor",
+                "include_sender_followers": "1",
+            },
+            follow_redirects=True,
+        )
+        run_resp = client.post("/campaigns/1/run", follow_redirects=True)
+        assert run_resp.status_code == 200
+        assert "1. Find" in run_resp.text
+        assert "Next step" in run_resp.text
+        assert "Set aside:" in run_resp.text
+        assert "See who and why" in run_resp.text
+
+
+def test_next_step_is_review_when_drafts_wait(tmp_path, monkeypatch):
+    db_file = tmp_path / "web_next_step_review.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    with TestClient(app) as client:
+        client.post(
+            "/campaigns",
+            data={
+                "name": "Drafts Campaign",
+                "segment": "AI and robotics",
+                "search_keywords": "robot, LLM, agent",
+                "seed_handles": "demo_seed_investor",
+                "include_sender_followers": "1",
+            },
+            follow_redirects=True,
+        )
+        client.post("/campaigns/1/run", follow_redirects=True)
+        draft_resp = client.post("/campaigns/1/draft", follow_redirects=True)
+        assert draft_resp.status_code == 200
+        assert "drafts are waiting for your review" in draft_resp.text
+
+
+def test_last_run_problem_is_explained(tmp_path, monkeypatch):
+    db_file = tmp_path / "web_run_problem.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    with TestClient(app) as client:
+        client.post(
+            "/campaigns",
+            data={
+                "name": "Problem Campaign",
+                "segment": "Robotics",
+                "search_keywords": "robot",
+            },
+            follow_redirects=True,
+        )
+        conn = connect(str(db_file))
+        now_str = iso(datetime.now(timezone.utc))
+        with db.transaction(conn):
+            conn.execute(
+                """
+                INSERT INTO discovery_runs (campaign_id, status, error, started_at, counts)
+                VALUES (1, 'auth_error', 'token expired', ?, '{}')
+                """,
+                (now_str,),
+            )
+        conn.close()
+
+        resp = client.get("/campaigns/1")
+        assert resp.status_code == 200
+        assert "The last run stopped: auth_error." in resp.text
+        assert "Press Connect X" in resp.text
+
+
+def test_scored_view_does_not_repeat_the_screening_reason(tmp_path, monkeypatch):
+    db_file = tmp_path / "web_screen_reason_view.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    with TestClient(app) as client:
+        client.post(
+            "/campaigns",
+            data={
+                "name": "Reason Campaign",
+                "segment": "AI and robotics",
+                "search_keywords": "robot, LLM, agent",
+                "seed_handles": "demo_seed_investor",
+                "include_sender_followers": "1",
+            },
+            follow_redirects=True,
+        )
+        client.post("/campaigns/1/run", follow_redirects=True)
+
+        scored_resp = client.get("/campaigns/1?view=scored")
+        assert scored_resp.status_code == 200
+        assert "Model: Profile matches AI or robotics builder criteria" not in scored_resp.text
+
+        filtered_resp = client.get("/campaigns/1?view=filtered")
+        assert filtered_resp.status_code == 200
+        assert "Model: Profile does not show AI or robotics work" in filtered_resp.text
+
+
+def test_new_campaign_form_explains_sources(tmp_path, monkeypatch):
+    db_file = tmp_path / "web_new_sources.db"
+    monkeypatch.setenv("GROUNDLINE_DB_PATH", str(db_file))
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+
+    with TestClient(app) as client:
+        resp = client.get("/campaigns/new")
+        assert resp.status_code == 200
+        assert "Pick seeds based in your target region" in resp.text
+
+
+
+

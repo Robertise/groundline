@@ -1,7 +1,9 @@
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
 import urllib.parse
+import zoneinfo
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -29,6 +31,22 @@ from app.state import transition, TransitionError
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+
+def short_time(value) -> str:
+    """'2026-11-15T08:10:06.050004Z' -> '2026-11-15 15:10' in the configured time zone."""
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(zoneinfo.ZoneInfo(get_settings().timezone)).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(value)
+
+
+templates.env.filters["short_time"] = short_time
+
 router = APIRouter()
 
 PLAIN_REASONS = {
@@ -45,6 +63,60 @@ PLAIN_REASONS = {
     "no_evidence": "Nothing specific enough to write about",
     "insufficient_evidence": "Nothing specific enough to write about",
 }
+
+FILTER_SHORT_LABELS = {
+    "cannot_dm": "can't receive your DMs",
+    "bio_screen_failed": "no AI or robotics work shown",
+    "outside_segment": "outside the segment",
+    "low_score": "below the minimum score",
+    "inactive": "no recent posts",
+    "unsupported_quote": "evidence not found in profile",
+    "protected": "protected account",
+    "is_sender": "your own account",
+    "already_contacted": "already messaged",
+    "suppressed": "on your do-not-contact list",
+}
+
+RUN_PROBLEM_TEXT = {
+    "budget_reached": "The campaign budget was reached. Raise the budget or narrow the sources, then run again; finished people are kept.",
+    "rate_limited": "X asked the app to slow down. Run again in a few minutes; finished people are kept.",
+    "auth_error": "X rejected the app's access to your account. Press Connect X, then run again.",
+    "failed": "Something went wrong. The details are in Run history at the bottom of this page.",
+}
+
+
+def campaign_progress(conn: sqlite3.Connection, campaign_id: int) -> dict:
+    by_state = {
+        r["state"]: r["cnt"]
+        for r in conn.execute(
+            "SELECT state, count(*) AS cnt FROM prospects WHERE campaign_id = ? GROUP BY state",
+            (campaign_id,),
+        ).fetchall()
+    }
+    drafted = conn.execute(
+        "SELECT count(DISTINCT d.prospect_id) FROM drafts d JOIN prospects p ON d.prospect_id = p.id "
+        "WHERE p.campaign_id = ?",
+        (campaign_id,),
+    ).fetchone()[0]
+    out = {
+        r["state"]: r["cnt"]
+        for r in conn.execute(
+            "SELECT o.state, count(*) AS cnt FROM outreach o JOIN prospects p ON o.prospect_id = p.id "
+            "WHERE p.campaign_id = ? GROUP BY o.state",
+            (campaign_id,),
+        ).fetchall()
+    }
+    return {
+        "found": sum(by_state.values()),
+        "kept": sum(by_state.get(s, 0) for s in ("scored", "drafted", "queued", "rejected")),
+        "drafted": drafted,
+        "approved": sum(v for k, v in out.items() if k != "cancelled"),
+        "queued": out.get("approved", 0),
+        "sent": out.get("sent", 0) + out.get("replied", 0),
+        "replied": out.get("replied", 0),
+        "attention": sum(out.get(s, 0) for s in ("unknown", "failed", "blocked")),
+    }
+
 
 
 def _common_context(
@@ -107,6 +179,7 @@ def list_campaigns(
             )
             last_run_cost = float(cost_cur.fetchone()[0])
         c_dict["last_run_cost"] = last_run_cost
+        c_dict["progress"] = campaign_progress(conn, cid)
         campaign_list.append(c_dict)
 
     ctx = _common_context(request, conn, settings, msg, error)
@@ -379,6 +452,48 @@ def campaign_detail(
         (id,),
     ).fetchone()[0]
     ctx["draft_count"] = cur_draft_cnt
+
+    progress = campaign_progress(conn, id)
+    if not runs:
+        next_action = "run"
+    elif cur_draft_cnt > 0:
+        next_action = "review"
+    elif counts_by_tab["scored"] > 0:
+        next_action = "draft"
+    elif progress["queued"] > 0:
+        next_action = "send"
+    else:
+        next_action = "run"
+
+    filter_rows = conn.execute(
+        "SELECT state_reason, count(*) AS cnt FROM prospects WHERE campaign_id = ? AND state = 'filtered_out' "
+        "GROUP BY state_reason ORDER BY cnt DESC",
+        (id,),
+    ).fetchall()
+    filter_reasons = [
+        {"text": FILTER_SHORT_LABELS.get(r["state_reason"], PLAIN_REASONS.get(r["state_reason"], r["state_reason"] or "other")),
+         "count": r["cnt"]}
+        for r in filter_rows
+    ]
+
+    last_run_problem = None
+    last_run_errors = []
+    if runs:
+        latest = runs[0]
+        if latest["status"] not in ("completed", "running"):
+            last_run_problem = {
+                "status": latest["status"],
+                "explain": RUN_PROBLEM_TEXT.get(latest["status"], ""),
+                "error": latest.get("error") or "",
+            }
+        last_run_errors = (latest.get("counts_dict") or {}).get("errors") or []
+
+    ctx["progress"] = progress
+    ctx["next_action"] = next_action
+    ctx["filter_reasons"] = filter_reasons
+    ctx["last_run_problem"] = last_run_problem
+    ctx["last_run_errors"] = last_run_errors
+
     return templates.TemplateResponse(
         request=request, name="campaign_detail.html", context=ctx
     )
@@ -704,6 +819,7 @@ def review_campaign_drafts(
             no_ev_list.append(p_dict)
         ctx["no_evidence_list"] = no_ev_list
 
+    ctx["progress"] = campaign_progress(conn, id)
     return templates.TemplateResponse(
         request=request, name="review.html", context=ctx
     )

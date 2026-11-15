@@ -1,18 +1,20 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>What this tool will not do</h2>
-<ol style="line-height: 1.8; font-size: 15px; max-width: 800px; padding-left: 20px;">
-  <li>It never sends a message that a person has not approved, word for word.</li>
-  <li>It never messages the same person twice from the same account, including after a crash or a retry.</li>
-  <li>It never retries a send whose result is uncertain. It asks you to check on X first.</li>
-  <li>It sends no automatic follow-ups.</li>
-  <li>It does not follow, like, repost or reply for you.</li>
-  <li>It reads X only through the official API with your own account's access. No scraping, no browser automation, no purchased data.</li>
-  <li>It does not look people up outside X.</li>
-  <li>It cannot read replies: X does not return messages from encrypted conversations to apps. You mark replies by hand.</li>
-  <li>It cannot reach people who closed their DMs, or who accept requests only from verified accounts when your account is not verified. It shows these as blocked, with the reason.</li>
-  <li>It uses one sending account, a daily cap ({{ daily_cap }} per day) and a pause between messages.</li>
-  <li>In dry-run mode it never sends.</li>
-</ol>
+<h1>What this tool will not do</h1>
+<div class="card">
+  <ol>
+    <li>It never sends a message that a person has not approved, word for word.</li>
+    <li>It never messages the same person twice from the same account, including after a crash or a retry.</li>
+    <li>It never retries a send whose result is uncertain. It asks you to check on X first.</li>
+    <li>It sends no automatic follow-ups.</li>
+    <li>It does not follow, like, repost or reply for you.</li>
+    <li>It reads X only through the official API with your own account's access. No scraping, no browser automation, no purchased data.</li>
+    <li>It does not look people up outside X.</li>
+    <li>It cannot read replies: X does not return messages from encrypted conversations to apps. You mark replies by hand.</li>
+    <li>It cannot reach people who closed their DMs, or who accept requests only from verified accounts when your account is not verified. It shows these as blocked, with the reason.</li>
+    <li>It uses one sending account, a daily cap ({{ daily_cap }} per day) and a pause between messages.</li>
+    <li>In dry-run mode it never sends.</li>
+  </ol>
+</div>
 {% endblock %}

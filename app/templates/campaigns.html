@@ -1,39 +1,55 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-  <h2>Campaigns</h2>
+<div class="spread">
+  <div>
+    <h1>Campaigns</h1>
+    <p class="muted">Each campaign finds people for one target segment, drafts messages for you to approve, and tracks replies.</p>
+  </div>
   <a href="/campaigns/new" class="btn">+ New Campaign</a>
 </div>
 
+{% if mode != "mock" and not sender %}
+  <div class="banner-warn">Connect your X account first (top right). The app reads X and sends messages with that account.</div>
+{% endif %}
+
 {% if not campaigns %}
-  <p>No campaigns yet. <a href="/campaigns/new">Create your first campaign</a> to start discovery.</p>
+  <div class="card">
+    <h3>Get started</h3>
+    <ol>
+      <li><strong>Create a campaign.</strong> Describe who you want to reach and paste a few X handles or seed accounts.</li>
+      <li><strong>Run discovery.</strong> The app sets aside people who don't fit or can't be reached, scores the rest, and shows the quotes behind each score.</li>
+      <li><strong>Draft, review, approve.</strong> Drafts use only verified quotes. Nothing is sent until you approve the exact text.</li>
+      <li><strong>Send and track</strong> on the Outreach page.</li>
+    </ol>
+    {% if mode == "mock" %}
+      <p class="small muted">Mock mode uses 25 demo accounts. Try the seed handle <code>demo_seed_investor</code>.</p>
+    {% endif %}
+    <p><a href="/campaigns/new" class="btn">Create your first campaign</a></p>
+  </div>
 {% else %}
   <table>
     <thead>
-      <tr>
-        <th>Campaign Name</th>
-        <th>Created</th>
-        <th>Prospects (by state)</th>
-        <th>Last Run Status</th>
-        <th>Last Run Cost</th>
-        <th>Actions</th>
-      </tr>
+      <tr><th>Campaign</th><th>Progress</th><th>Last run</th></tr>
     </thead>
     <tbody>
       {% for c in campaigns %}
       <tr>
-        <td><strong><a href="/campaigns/{{ c.id }}">{{ c.name }}</a></strong></td>
-        <td>{{ c.created_at }}</td>
-        <td>
-          Scored: {{ c.counts_by_state.get('scored', 0) }},
-          Filtered: {{ c.counts_by_state.get('filtered_out', 0) }},
-          Discovered: {{ c.counts_by_state.get('discovered', 0) }},
-          Approved: {{ c.counts_by_state.get('approved', 0) }}
+        <td style="vertical-align: middle;">
+          <a href="/campaigns/{{ c.id }}"><strong>{{ c.name }}</strong></a>
+          <div class="small muted">{{ c.segment }}</div>
         </td>
-        <td>{{ c.last_run_status or "None" }}</td>
-        <td>${{ "%.4f"|format(c.last_run_cost or 0.0) }}</td>
-        <td><a href="/campaigns/{{ c.id }}" class="btn btn-secondary">View</a></td>
+        <td class="small" style="vertical-align: middle;">
+          {{ c.progress.found }} found · {{ c.progress.kept }} kept · {{ c.progress.drafted }} drafted ·
+          {{ c.progress.sent }} sent · {{ c.progress.replied }} replied
+        </td>
+        <td class="small" style="vertical-align: middle;">
+          {% if c.last_run_status %}
+            <span class="pill {% if c.last_run_status == 'completed' %}pill-green{% else %}pill-red{% endif %}">{{ c.last_run_status }}</span>
+          {% else %}
+            <span class="muted">not run yet</span>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>

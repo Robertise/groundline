@@ -2,42 +2,101 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title or "Groundline" }}</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 20px; color: #111; line-height: 1.5; }
-    header { border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
-    .brand { font-size: 22px; font-weight: bold; text-decoration: none; color: #111; }
-    .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
-    .badge-mock { background: #e0f2fe; color: #0369a1; }
-    .badge-dry { background: #fef3c7; color: #b45309; }
-    .badge-live { background: #fee2e2; color: #b91c1c; }
-    .banner-red { background: #fee2e2; border: 1px solid #ef4444; color: #b91c1c; padding: 10px 15px; border-radius: 6px; margin-bottom: 15px; }
-    .banner-msg { background: #dcfce7; border: 1px solid #22c55e; color: #15803d; padding: 10px 15px; border-radius: 6px; margin-bottom: 15px; }
-    .banner-err { background: #fee2e2; border: 1px solid #ef4444; color: #b91c1c; padding: 10px 15px; border-radius: 6px; margin-bottom: 15px; }
-    nav a { margin-right: 15px; text-decoration: none; color: #2563eb; font-weight: 500; }
-    nav a:hover { text-decoration: underline; }
-    table { width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 25px; }
-    th, td { border: 1px solid #e5e7eb; padding: 8px 12px; text-align: left; font-size: 14px; vertical-align: top; }
-    th { background: #f9fafb; font-weight: 600; }
-    .btn { display: inline-block; padding: 6px 12px; background: #2563eb; color: #fff; text-decoration: none; border-radius: 4px; font-size: 14px; border: none; cursor: pointer; }
-    .btn:hover { background: #1d4ed8; }
-    .btn-secondary { background: #6b7280; }
-    .btn-secondary:hover { background: #4b5563; }
-    .form-group { margin-bottom: 15px; }
-    label { display: block; font-weight: 600; margin-bottom: 5px; font-size: 14px; }
-    input[type="text"], input[type="number"], textarea { width: 100%; max-width: 600px; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
-    textarea { height: 80px; }
-    .tabs { margin-bottom: 15px; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px; }
-    .tabs a { margin-right: 15px; text-decoration: none; color: #4b5563; font-weight: 500; padding: 4px 8px; border-radius: 4px; }
-    .tabs a.active { background: #e5e7eb; color: #111; font-weight: bold; }
-    .app-note { font-size: 12px; color: #6b7280; margin-top: 30px; border-top: 1px solid #eee; padding-top: 10px; }
+    :root { --bg:#f6f7f9; --card:#fff; --line:#e5e7eb; --text:#111827; --muted:#6b7280; --primary:#2563eb; --primary-d:#1d4ed8; --green:#059669; --red:#b91c1c; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+    a { color:var(--primary); }
+    .wrap { max-width:1120px; margin:0 auto; padding:0 20px; }
+    header.top { background:#fff; border-bottom:1px solid var(--line); margin-bottom:28px; }
+    header.top .wrap { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:58px; flex-wrap:wrap; }
+    .brand { font-weight:700; font-size:18px; color:var(--text); text-decoration:none; margin-right:10px; }
+    header nav a { color:#374151; text-decoration:none; margin-left:18px; font-weight:500; font-size:14px; }
+    header nav a:hover { color:var(--primary); }
+    .account { font-size:14px; font-weight:500; margin-left:18px; }
+    main.wrap { padding-top:4px; padding-bottom:48px; }
+    h1 { font-size:24px; margin:0 0 4px; }
+    h2 { font-size:18px; margin:28px 0 10px; }
+    h3 { font-size:15px; margin:0 0 6px; }
+    p { margin:6px 0; }
+    .muted { color:var(--muted); }
+    .small { font-size:13px; }
+    .back { display:inline-block; font-size:14px; text-decoration:none; margin-bottom:8px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 20px; margin:0 0 16px; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .row form { margin:0; }
+    .spread { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+    .btn { display:inline-block; padding:8px 14px; border-radius:8px; border:1px solid transparent; background:var(--primary); color:#fff; font-size:14px; font-weight:600; text-decoration:none; cursor:pointer; line-height:1.2; font-family:inherit; }
+    .btn:hover { background:var(--primary-d); }
+    .btn-secondary { background:#fff; color:#374151; border-color:#d1d5db; }
+    .btn-secondary:hover { background:#f3f4f6; }
+    .btn-green { background:var(--green); }
+    .btn-green:hover { background:#047857; }
+    .btn-danger { background:#fff; color:var(--red); border-color:#fca5a5; }
+    .btn-danger:hover { background:#fef2f2; }
+    .btn-sm { padding:5px 10px; font-size:13px; }
+    .btn[disabled], .btn[disabled]:hover { background:#e5e7eb; color:#9ca3af; border-color:#e5e7eb; cursor:not-allowed; }
+    .badge { padding:3px 8px; border-radius:6px; font-size:12px; font-weight:600; text-transform:uppercase; }
+    .badge-mock { background:#e0f2fe; color:#0369a1; }
+    .badge-dry { background:#fef3c7; color:#b45309; }
+    .badge-live { background:#fee2e2; color:#b91c1c; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; background:#f3f4f6; color:#374151; }
+    .pill-green { background:#dcfce7; color:#166534; }
+    .pill-amber { background:#fef3c7; color:#92400e; }
+    .pill-red { background:#fee2e2; color:#991b1b; }
+    .pill-blue { background:#dbeafe; color:#1e40af; }
+    .banner-red, .banner-err { background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; padding:10px 14px; border-radius:8px; margin-bottom:16px; }
+    .banner-msg { background:#f0fdf4; border:1px solid #86efac; color:#166534; padding:10px 14px; border-radius:8px; margin-bottom:16px; }
+    .banner-warn { background:#fffbeb; border:1px solid #fcd34d; color:#92400e; padding:10px 14px; border-radius:8px; margin-bottom:16px; }
+    .banner-err ul, .banner-warn ul { margin:6px 0 0; padding-left:20px; }
+    table { width:100%; border-collapse:separate; border-spacing:0; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; margin:8px 0 20px; }
+    th, td { padding:10px 12px; text-align:left; vertical-align:top; font-size:14px; border-bottom:1px solid var(--line); }
+    th { background:#f9fafb; font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); font-weight:600; }
+    tbody tr:last-child td { border-bottom:none; }
+    .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin:8px 0 14px; flex-wrap:wrap; }
+    .tabs a { padding:8px 12px; color:var(--muted); text-decoration:none; font-weight:500; border-bottom:2px solid transparent; margin-bottom:-1px; }
+    .tabs a.active { color:var(--text); border-bottom-color:var(--primary); font-weight:600; }
+    .steps { display:flex; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; margin:12px 0 18px; }
+    .steps a { flex:1; padding:10px 12px; text-decoration:none; color:var(--muted); font-size:13px; border-right:1px solid var(--line); }
+    .steps a:last-child { border-right:none; }
+    .steps a strong { display:block; color:var(--text); font-size:14px; }
+    .steps a.done strong::before { content:"\2713  "; color:var(--green); }
+    .steps a.current { background:#eff6ff; box-shadow:inset 0 -3px 0 var(--primary); }
+    .stats { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:8px; }
+    .stat { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+    .stat b { display:block; font-size:22px; }
+    .form-group { margin-bottom:16px; }
+    label { display:block; font-weight:600; font-size:14px; margin-bottom:4px; }
+    label.check { font-weight:500; }
+    .help { font-size:13px; color:var(--muted); margin-top:4px; max-width:640px; }
+    input[type="text"], input[type="number"], textarea { width:100%; max-width:640px; padding:9px 10px; border:1px solid #d1d5db; border-radius:8px; font:inherit; font-size:14px; background:#fff; }
+    input[type="number"] { max-width:140px; }
+    textarea { min-height:80px; }
+    details > summary { cursor:pointer; font-weight:600; color:#374151; }
+    details[open] > summary { margin-bottom:10px; }
+    .quote { display:block; color:#1f2937; text-decoration:none; font-size:13px; margin-bottom:6px; }
+    .quote:hover { color:var(--primary); }
+    .tip-wrap { position:relative; display:inline-flex; align-items:center; margin-left:6px; vertical-align:middle; font-weight:normal; }
+    .tip-icon { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%; background:#e5e7eb; color:#4b5563; font-size:11px; font-weight:700; cursor:help; line-height:1; }
+    .tip-icon:hover { background:#d1d5db; color:#111827; }
+    .tip-box { display:none; position:absolute; bottom:calc(100% + 8px); left:-12px; width:330px; background:#eaedf2; border:1px solid #cbd5e1; color:#1f2937; padding:10px 12px; border-radius:8px; font-size:12px; line-height:1.45; font-weight:400; box-shadow:0 6px 16px rgba(0,0,0,0.15); z-index:100; pointer-events:none; text-align:left; cursor:default; }
+    .tip-box::before { content:""; position:absolute; top:100%; left:15px; border-width:7px; border-style:solid; border-color:#cbd5e1 transparent transparent transparent; }
+    .tip-box::after { content:""; position:absolute; top:100%; left:16px; border-width:6px; border-style:solid; border-color:#eaedf2 transparent transparent transparent; }
+    .tip-wrap:hover .tip-box { display:block; }
+    .tip-item { margin-bottom:8px; }
+    .tip-item:last-child { margin-bottom:0; }
+    .tip-item strong { color:#0f172a; display:block; font-weight:600; margin-bottom:1px; }
+    .app-note { font-size:12px; color:var(--muted); border-top:1px solid var(--line); padding:12px 20px 24px; }
+    @media (max-width: 760px) { .stats { grid-template-columns:repeat(2, minmax(0,1fr)); } .steps { flex-direction:column; } .steps a { border-right:none; border-bottom:1px solid var(--line); } }
   </style>
 </head>
 <body>
-  <header>
-    <div>
-      <a href="/campaigns" class="brand">Groundline</a>
-      <span style="margin-left: 10px;">
+  <header class="top">
+    <div class="wrap">
+      <div>
+        <a href="/campaigns" class="brand">Groundline</a>
         {% if mode == "mock" %}
           <span class="badge badge-mock">MOCK — demo data, no external calls</span>
         {% elif mode == "dry_run" %}
@@ -45,42 +104,44 @@
         {% else %}
           <span class="badge badge-live">LIVE</span>
         {% endif %}
-      </span>
-    </div>
-    <div>
-      <nav style="display: inline-block; margin-right: 20px;">
-        <a href="/campaigns">Campaigns</a>
-        <a href="/costs">Costs</a>
-        <a href="/outreach">Outreach</a>
-        <a href="/limits">Limits</a>
-      </nav>
-      {% if sender %}
-        <span style="font-size: 14px; font-weight: 500;">Connected as @{{ sender.username }}</span>
-      {% elif mode != "mock" %}
-        <a href="/connect" class="btn">Connect X</a>
-      {% endif %}
+      </div>
+      <div class="row">
+        <nav>
+          <a href="/campaigns">Campaigns</a>
+          <a href="/outreach">Outreach</a>
+          <a href="/costs">Costs</a>
+          <a href="/limits">Limits</a>
+        </nav>
+        {% if sender %}
+          <span class="account">Connected as @{{ sender.username }}</span>
+        {% elif mode != "mock" %}
+          <a href="/connect" class="btn btn-sm" style="margin-left:18px;">Connect X</a>
+        {% endif %}
+      </div>
     </div>
   </header>
 
-  {% if missing_settings %}
-    <div class="banner-red">
-      <strong>Configuration Warning:</strong> Missing required settings for live/dry-run: {{ missing_settings|join(', ') }}
-    </div>
-  {% endif %}
+  <main class="wrap">
+    {% if missing_settings %}
+      <div class="banner-red">
+        <strong>Setup incomplete.</strong> Add
+        {% for m in missing_settings %}<code>GROUNDLINE_{{ m|upper }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+        to your <code>.env</code> file and restart the app. The README explains each value.
+      </div>
+    {% endif %}
 
-  {% if msg %}
-    <div class="banner-msg">{{ msg }}</div>
-  {% endif %}
-  {% if error %}
-    <div class="banner-err">{{ error }}</div>
-  {% endif %}
+    {% if msg %}
+      <div class="banner-msg">{{ msg }}</div>
+    {% endif %}
+    {% if error %}
+      <div class="banner-err">{{ error }}</div>
+    {% endif %}
 
-  <main>
     {% block content %}{% endblock %}
   </main>
 
-  <div class="app-note">
-    Open this app at <a href="http://127.0.0.1:8000">http://127.0.0.1:8000</a>
+  <div class="app-note wrap">
+    Open this app at <a href="http://127.0.0.1:8000">http://127.0.0.1:8000</a> (not localhost).
   </div>
 </body>
 </html>

@@ -1,0 +1,18 @@
+{% set p = progress %}
+<div class="steps">
+  <a href="/campaigns/{{ campaign.id }}" class="{% if step == 'find' %}current{% endif %} {% if p.found %}done{% endif %}">
+    <strong>1. Find</strong>{{ p.found }} found · {{ p.kept }} kept
+  </a>
+  <a href="/campaigns/{{ campaign.id }}" class="{% if step == 'draft' %}current{% endif %} {% if p.drafted %}done{% endif %}">
+    <strong>2. Draft</strong>{{ p.drafted }} drafted
+  </a>
+  <a href="/campaigns/{{ campaign.id }}/review" class="{% if step == 'review' %}current{% endif %} {% if p.approved %}done{% endif %}">
+    <strong>3. Review</strong>{{ p.approved }} approved
+  </a>
+  <a href="/outreach?tab=queue" class="{% if step == 'send' %}current{% endif %} {% if p.sent %}done{% endif %}">
+    <strong>4. Send</strong>{{ p.queued }} waiting · {{ p.sent }} sent
+  </a>
+  <a href="/outreach?tab=replies" class="{% if step == 'track' %}current{% endif %} {% if p.replied %}done{% endif %}">
+    <strong>5. Track</strong>{{ p.replied }} replied{% if p.attention %} · {{ p.attention }} need attention{% endif %}
+  </a>
+</div>

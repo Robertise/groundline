@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>Costs & Ledger</h2>
+<h1>Costs</h1>
 
 <p style="color: #4b5563; font-style: italic;">
   Estimates from published per-unit prices. The X Developer Console is the source of truth.
 </p>
 
-<div style="display: flex; gap: 20px; margin-bottom: 25px;">
-  <div style="flex: 1; border: 1px solid #e5e7eb; border-radius: 6px; padding: 15px; background: #fafafa;">
+<div class="stats" style="grid-template-columns:repeat(2,minmax(0,1fr));">
+  <div class="stat">
     <h3 style="margin-top: 0;">Real Costs Total</h3>
     <p style="font-size: 24px; font-weight: bold; color: #111; margin: 0;">${{ "%.4f"|format(real_total_cost) }}</p>
   </div>
-  <div style="flex: 1; border: 1px solid #e5e7eb; border-radius: 6px; padding: 15px; background: #fafafa;">
+  <div class="stat">
     <h3 style="margin-top: 0;">Simulated Costs Total</h3>
     <p style="font-size: 24px; font-weight: bold; color: #0369a1; margin: 0;">${{ "%.4f"|format(simulated_total_cost) }}</p>
   </div>
@@ -42,7 +42,7 @@
     </tbody>
   </table>
 
-  <h4>By Day</h4>
+  <details><summary>By day</summary>
   <table>
     <thead>
       <tr>
@@ -61,6 +61,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </details>
 {% endif %}
 
 <h3 style="margin-top: 35px;">Simulated Usage & Costs (Mock / Fixtures)</h3>
@@ -87,7 +88,7 @@
     </tbody>
   </table>
 
-  <h4>By Day</h4>
+  <details><summary>By day</summary>
   <table>
     <thead>
       <tr>
@@ -106,6 +107,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </details>
 {% endif %}
 
 {% endblock %}

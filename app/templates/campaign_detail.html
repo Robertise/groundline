@@ -1,172 +1,128 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px;">
-  <div>
-    <h2>{{ campaign.name }}</h2>
-    <p style="color: #4b5563; margin-top: -10px;">{{ campaign.segment }}</p>
-  </div>
-  <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-    <form action="/campaigns/{{ campaign.id }}/run" method="POST" style="display: inline;">
-      <button type="submit" class="btn" style="padding: 10px 20px; font-size: 15px;">Run discovery</button>
-    </form>
-    <div style="display: inline-block;">
-      <form action="/campaigns/{{ campaign.id }}/draft" method="POST" style="display: inline;">
-        <button type="submit" class="btn" style="padding: 10px 20px; font-size: 15px; background: #059669;">Draft messages</button>
-      </form>
-      <small style="color: #6b7280; display: block; margin-top: 4px;">Drafts up to 10 of the highest-scored prospects without a draft</small>
-    </div>
-    <a href="/campaigns/{{ campaign.id }}/review" class="btn" style="padding: 10px 20px; font-size: 15px; text-decoration: none; background: #4f46e5;">Review drafts ({{ draft_count }})</a>
-  </div>
-</div>
+{% set state_labels = {"discovered": "Waiting", "scored": "Scored", "filtered_out": "Filtered", "drafted": "Drafted", "queued": "Approved", "rejected": "Rejected", "no_evidence": "Nothing specific"} %}
+{% set state_pills = {"scored": "pill-blue", "filtered_out": "", "drafted": "pill-amber", "queued": "pill-green", "rejected": "pill-red", "no_evidence": ""} %}
+{% set step = {"run": "find", "draft": "draft", "review": "review", "send": "send"}[next_action] %}
 
-<div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 25px;">
-  <div style="flex: 1; min-width: 280px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 15px; background: #fafafa;">
-    <h4 style="margin-top: 0;">Budget & Cost Estimate</h4>
-    <p><strong>Campaign Budget:</strong> ${{ "%.2f"|format(campaign.budget_usd) }}</p>
-    <p><strong>Spent so far:</strong> ${{ "%.4f"|format(spent_so_far) }}</p>
-    <p><strong>Max Run Cost Estimate:</strong> ${{ "%.4f"|format(cost_est.total_usd) }}
-      <br><small style="color: #6b7280;">(X: ${{ "%.4f"|format(cost_est.x_usd) }}, LLM: ${{ "%.4f"|format(cost_est.llm_usd) }})</small>
-    </p>
-  </div>
+<a href="/campaigns" class="back">&larr; All campaigns</a>
+<h1>{{ campaign.name }}</h1>
+<p class="muted">{{ campaign.segment }}</p>
 
-  <div style="flex: 2; min-width: 320px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 15px; background: #fafafa;">
-    <h4 style="margin-top: 0;">Campaign Settings</h4>
-    <p style="margin: 4px 0;"><strong>Keywords:</strong> {{ campaign.search_keywords or "None" }} (max {{ campaign.search_max_posts }} posts)</p>
-    <p style="margin: 4px 0;"><strong>Seeds:</strong> {{ campaign.seed_handles or "None" }} (max {{ campaign.seed_following_max }} following)</p>
-    <p style="margin: 4px 0;"><strong>Followers:</strong> {{ "Yes (max " ~ campaign.followers_max ~ ")" if campaign.include_sender_followers else "No" }}</p>
-    <p style="margin: 4px 0;"><strong>Deep Profiles Max:</strong> {{ campaign.max_deep_profiles }} | <strong>Min Score:</strong> {{ campaign.min_score }}</p>
-  </div>
-</div>
+{% include "_steps.html" %}
 
-<h3>Discovery Runs</h3>
-{% if not runs %}
-  <p style="color: #6b7280;">No discovery runs yet for this campaign.</p>
-{% else %}
-  <table>
-    <thead>
-      <tr>
-        <th>Run ID</th>
-        <th>Status</th>
-        <th>Started</th>
-        <th>Finished</th>
-        <th>Counts</th>
-        <th>Cost</th>
-        <th>Error</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in runs %}
-      <tr>
-        <td>#{{ r.id }}</td>
-        <td><strong>{{ r.status }}</strong></td>
-        <td>{{ r.started_at }}</td>
-        <td>{{ r.finished_at or "In progress" }}</td>
-        <td>
-          {% if r.counts_dict %}
-            Found: {{ r.counts_dict.found }}, Scored: {{ r.counts_dict.scored }},
-            Screened: {{ r.counts_dict.screened }}, Left: {{ r.counts_dict.left_discovered }}
-          {% else %}
-            -
-          {% endif %}
-        </td>
-        <td>${{ "%.4f"|format(r.cost or 0.0) }}</td>
-        <td style="color: #dc2626; font-size: 13px;">
-          {% if r.error %}
-            <div>{{ r.error }}</div>
-          {% endif %}
-          {% if r.counts_dict and r.counts_dict.errors %}
-            {% for err in r.counts_dict.errors %}
-              <div>@{{ err.username }}: {{ err.error }}</div>
-            {% endfor %}
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% if last_run_problem %}
+  <div class="banner-err">
+    <strong>The last run stopped: {{ last_run_problem.status }}.</strong> {{ last_run_problem.explain }}
+    {% if last_run_problem.error %}<div class="small">{{ last_run_problem.error }}</div>{% endif %}
+  </div>
+{% endif %}
+{% if last_run_errors %}
+  <div class="banner-warn">
+    <strong>Some people could not be processed in the last run.</strong> They stay in Waiting and are tried again on the next run.
+    <ul class="small">
+      {% for err in last_run_errors %}<li>@{{ err.username }}: {{ err.error }}</li>{% endfor %}
+    </ul>
+  </div>
 {% endif %}
 
-<h3 style="margin-top: 35px;">Prospects</h3>
+<div class="card">
+  <div class="spread" style="margin-bottom:0;">
+    <div style="max-width:600px;">
+      <h3>Next step</h3>
+      {% if next_action == "run" %}
+        <p>Find people. The app reads your sources, sets aside people who can't receive your DMs or don't fit, and scores up to {{ campaign.max_deep_profiles }}. This run costs at most ${{ "%.2f"|format(cost_est.total_usd) }}.</p>
+      {% elif next_action == "review" %}
+        <p>{{ draft_count }} drafts are waiting for your review. Nothing is sent until you approve the exact text.</p>
+      {% elif next_action == "draft" %}
+        <p>{{ counts_by_tab.scored }} people are ready for a draft. Each draft is written only from quotes the app verified in their profile and posts, up to 10 at a time.</p>
+      {% else %}
+        <p>{{ progress.queued }} approved messages are waiting to be sent from the Outreach page.</p>
+      {% endif %}
+    </div>
+    <div class="row">
+      <form action="/campaigns/{{ campaign.id }}/run" method="POST">
+        <button type="submit" class="btn {% if next_action != 'run' %}btn-secondary{% endif %}">Run discovery</button>
+      </form>
+      <form action="/campaigns/{{ campaign.id }}/draft" method="POST">
+        <button type="submit" class="btn {% if next_action != 'draft' %}btn-secondary{% endif %}">Draft messages</button>
+      </form>
+      <a href="/campaigns/{{ campaign.id }}/review" class="btn {% if next_action != 'review' %}btn-secondary{% endif %}">Review drafts ({{ draft_count }})</a>
+      {% if progress.queued %}
+        <a href="/outreach?tab=queue" class="btn {% if next_action != 'send' %}btn-secondary{% endif %}">Go to Outreach</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat"><b>{{ counts_by_tab.all }}</b><span class="small muted">found</span></div>
+  <div class="stat"><b>{{ progress.kept }}</b><span class="small muted">kept (score ≥ {{ campaign.min_score }})</span></div>
+  <div class="stat"><b>{{ counts_by_tab.filtered }}</b><span class="small muted">set aside</span></div>
+  <div class="stat"><b>{{ counts_by_tab.pending }}</b><span class="small muted">waiting</span></div>
+</div>
+{% if filter_reasons %}
+  <p class="small muted">
+    Set aside: {% for r in filter_reasons %}{{ r.count }} {{ r.text }}{% if not loop.last %} · {% endif %}{% endfor %}.
+    <a href="/campaigns/{{ campaign.id }}?view=filtered">See who and why</a>
+  </p>
+{% endif %}
+<p class="small muted">
+  Budget ${{ "%.2f"|format(campaign.budget_usd) }} · <strong>Spent so far:</strong> ${{ "%.4f"|format(spent_so_far) }} · next run up to ${{ "%.2f"|format(cost_est.total_usd) }}
+</p>
+
+<h2>People</h2>
 <div class="tabs">
   <a href="/campaigns/{{ campaign.id }}?view=scored" class="{% if current_view == 'scored' %}active{% endif %}">Scored ({{ counts_by_tab.scored }})</a>
   <a href="/campaigns/{{ campaign.id }}?view=filtered" class="{% if current_view == 'filtered' %}active{% endif %}">Filtered ({{ counts_by_tab.filtered }})</a>
-  <a href="/campaigns/{{ campaign.id }}?view=pending" class="{% if current_view == 'pending' %}active{% endif %}">Pending / Discovered ({{ counts_by_tab.pending }})</a>
+  <a href="/campaigns/{{ campaign.id }}?view=pending" class="{% if current_view == 'pending' %}active{% endif %}">Waiting ({{ counts_by_tab.pending }})</a>
   <a href="/campaigns/{{ campaign.id }}?view=all" class="{% if current_view == 'all' %}active{% endif %}">All ({{ counts_by_tab.all }})</a>
 </div>
 
 {% if not prospects %}
-  <p style="color: #6b7280;">No prospects in this view.</p>
+  <div class="card muted">
+    {% if not runs %}No one yet. Press Run discovery to find people.
+    {% elif current_view == 'scored' and draft_count %}Everyone scored has a draft. Open Review drafts.
+    {% else %}No people in this view.{% endif %}
+  </div>
 {% else %}
-  <table>
+  <table style="table-layout: fixed;">
     <thead>
       <tr>
-        <th>User</th>
-        <th>Score</th>
-        <th>Role / Segment</th>
-        <th>Why Fit</th>
-        <th>Evidence</th>
-        <th>Sources</th>
-        <th>Can DM</th>
-        <th>State & Reason</th>
+        <th style="width:15%;">Person</th>
+        <th style="width:6%;">Score</th>
+        <th style="width:30%;">Why they fit</th>
+        <th style="width:31%;">Evidence</th>
+        <th style="width:18%;">Status</th>
       </tr>
     </thead>
     <tbody>
       {% for p in prospects %}
       <tr>
-        <td>
-          <a href="https://x.com/{{ p.username }}" target="_blank" rel="noopener">@{{ p.username }}</a>
-          <br><small style="color: #6b7280;">{{ p.name or "" }}</small>
+        <td style="word-break: break-word;">
+          <a href="https://x.com/{{ p.username }}" target="_blank" rel="noopener"><strong>@{{ p.username }}</strong></a>
+          <div class="small muted">{{ p.name or "" }}</div>
+          {% if p.role %}<div class="small">{{ p.role }}{% if p.segment %} · {{ p.segment }}{% endif %}</div>{% endif %}
+          {% if p.sources_list %}<div class="small muted">via {{ p.sources_list|join(", ") }}</div>{% endif %}
         </td>
-        <td style="font-size: 16px; font-weight: bold;">
-          {{ p.score if p.score is not none else "-" }}
-        </td>
-        <td>
-          <strong>{{ p.role or "-" }}</strong>
-          <br><small>{{ p.segment or "" }}</small>
+        <td style="font-size:18px; font-weight:700;">{{ p.score if p.score is not none else "–" }}</td>
+        <td class="small" style="word-break: break-word;">
+          {% for line in p.why_fit_lines %}<div>{{ line }}</div>{% endfor %}
           {% if p.fit_reasons and p.fit_reasons.segment_status %}
-            <br><small style="color: #6b7280;">Segment: {{ p.fit_reasons.segment_status }}{% if p.fit_reasons.segment_evidence and p.fit_reasons.segment_evidence[0].quote %} ({{ p.fit_reasons.segment_evidence[0].quote[:80] }}){% endif %}</small>
+            <div class="muted" style="margin-top:4px;">Segment: {{ p.fit_reasons.segment_status }}{% if p.fit_reasons.segment_evidence and p.fit_reasons.segment_evidence[0].quote %} ({{ p.fit_reasons.segment_evidence[0].quote[:80] }}){% endif %}</div>
           {% endif %}
+          {% if p.caution %}<div style="color:#b45309; margin-top:4px;">Caution: {{ p.caution }}</div>{% endif %}
         </td>
-        <td style="max-width: 220px; font-size: 13px;">
-          {% for line in p.why_fit_lines %}
-            <div>{{ line }}</div>
-          {% endfor %}
-          {% if p.caution %}
-            <div style="color: #b45309; font-style: italic; margin-top: 4px;">Caution: {{ p.caution }}</div>
-          {% endif %}
-        </td>
-        <td style="max-width: 250px; font-size: 13px;">
+        <td style="word-break: break-word;">
           {% for ev in p.evidence_items %}
-            <div style="margin-bottom: 4px;">
-              <a href="{{ ev.url }}" target="_blank" rel="noopener" style="text-decoration: none; color: #2563eb;">
-                "{{ ev.quote[:120] }}{% if ev.quote|length > 120 %}...{% endif %}"
-              </a>
-              <small style="color: #6b7280;">({{ ev.source }})</small>
-            </div>
+            <a class="quote" href="{{ ev.url }}" target="_blank" rel="noopener">"{{ ev.quote[:120] }}{% if ev.quote|length > 120 %}…{% endif %}" <span class="muted">({{ ev.source }})</span></a>
           {% endfor %}
         </td>
-        <td>
-          {% for s in p.sources_list %}
-            <span style="display: inline-block; background: #e5e7eb; border-radius: 3px; padding: 2px 5px; font-size: 11px; margin: 1px;">{{ s }}</span>
-          {% endfor %}
-        </td>
-        <td>
-          {% if p.receives_your_dm == 1 %}
-            <span style="color: #15803d; font-weight: 600;">yes</span>
-          {% elif p.receives_your_dm == 0 %}
-            <span style="color: #b91c1c; font-weight: 600;">no</span>
-          {% else %}
-            <span style="color: #6b7280;">unknown</span>
-          {% endif %}
-        </td>
-        <td>
-          <strong>{{ p.state }}</strong>
-          {% if p.state_reason %}
-            <br><small style="color: #4b5563;">{{ plain_reasons.get(p.state_reason, p.state_reason) }}</small>
-          {% endif %}
-          {% if p.fit_reasons and p.fit_reasons.tier1 and p.fit_reasons.tier1.reason %}
-            <br><small style="color: #6b7280;">Model: {{ p.fit_reasons.tier1.reason }}</small>
+        <td class="small" style="word-break: break-word;">
+          <span class="pill {{ state_pills.get(p.state, '') }}">{{ state_labels.get(p.state, p.state) }}</span>
+          {% if p.state_reason %}<div style="margin-top:4px;">{{ plain_reasons.get(p.state_reason, p.state_reason) }}</div>{% endif %}
+          {% if p.state == 'filtered_out' and p.fit_reasons and p.fit_reasons.tier1 and p.fit_reasons.tier1.reason %}
+            <div class="muted" style="margin-top:4px;">Model: {{ p.fit_reasons.tier1.reason }}</div>
           {% endif %}
         </td>
       </tr>
@@ -174,4 +130,47 @@
     </tbody>
   </table>
 {% endif %}
+
+<details class="card">
+  <summary>Campaign settings</summary>
+  <p class="small"><strong>Handles:</strong> {{ campaign.handles or "None" }}</p>
+  <p class="small"><strong>Seeds:</strong> {{ campaign.seed_handles or "None" }} (up to {{ campaign.seed_following_max }} each)</p>
+  <p class="small"><strong>Keywords:</strong> {{ campaign.search_keywords or "None" }} (up to {{ campaign.search_max_posts }} posts)</p>
+  <p class="small"><strong>My followers:</strong> {{ "Yes (up to " ~ campaign.followers_max ~ ")" if campaign.include_sender_followers else "No" }}</p>
+  <p class="small"><strong>Scored in depth:</strong> up to {{ campaign.max_deep_profiles }} · <strong>Minimum score:</strong> {{ campaign.min_score }}</p>
+  <p class="small muted">Next run estimate: X ${{ "%.4f"|format(cost_est.x_usd) }}, model ${{ "%.4f"|format(cost_est.llm_usd) }}.</p>
+  {% if campaign.brief %}<p class="small"><strong>About you:</strong> {{ campaign.brief }}</p>{% endif %}
+</details>
+
+<details class="card">
+  <summary>Run history ({{ runs|length }})</summary>
+  {% if not runs %}
+    <p class="small muted">No runs yet.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr><th>Run</th><th>Status</th><th>Started</th><th>Result</th><th>Cost</th><th>Problems</th></tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+        <tr>
+          <td>#{{ r.id }}</td>
+          <td><span class="pill {% if r.status == 'completed' %}pill-green{% elif r.status == 'running' %}pill-blue{% else %}pill-red{% endif %}">{{ r.status }}</span></td>
+          <td class="small">{{ r.started_at|short_time }}</td>
+          <td class="small">
+            {% if r.counts_dict %}{{ r.counts_dict.found }} found, {{ r.counts_dict.screened }} screened, {{ r.counts_dict.scored }} scored{% if r.counts_dict.left_discovered %}, {{ r.counts_dict.left_discovered }} left waiting{% endif %}{% else %}–{% endif %}
+          </td>
+          <td class="small">${{ "%.4f"|format(r.cost or 0.0) }}</td>
+          <td class="small" style="color:#991b1b;">
+            {% if r.error %}<div>{{ r.error }}</div>{% endif %}
+            {% if r.counts_dict and r.counts_dict.errors %}
+              {% for err in r.counts_dict.errors %}<div>@{{ err.username }}: {{ err.error }}</div>{% endfor %}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</details>
 {% endblock %}

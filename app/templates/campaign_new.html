@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>New Campaign</h2>
+<a href="/campaigns" class="back">&larr; All campaigns</a>
+<h1>New campaign</h1>
+<p class="muted">Three short parts. You can run it right after saving; nothing is sent from this page.</p>
 
 {% if errors %}
   <div class="banner-err">
@@ -14,82 +16,130 @@
 {% endif %}
 
 <form action="/campaigns" method="POST">
-  <div class="form-group">
-    <label for="name">Campaign Name *</label>
-    <input type="text" id="name" name="name" value="{{ form.name or '' }}" required>
+  <div class="card">
+    <h3>1. Who you want to reach</h3>
+    <div class="form-group">
+      <label for="name">Campaign name</label>
+      <input type="text" id="name" name="name" value="{{ form.name or '' }}" required>
+    </div>
+    <div class="form-group">
+      <label for="segment">Target segment</label>
+      <textarea id="segment" name="segment" placeholder="AI and robotics founders and builders in Southeast Asia" required>{{ form.segment or '' }}</textarea>
+      <div class="help">One sentence. The model judges fit against it. A person whose stated location is clearly outside it is set aside; people who state no location are kept.</div>
+    </div>
+    <div class="form-group">
+      <label for="brief">About you (optional)</label>
+      <textarea id="brief" name="brief" placeholder="Who you are and what you invite people to">{{ form.brief or '' }}</textarea>
+      <div class="help">One or two sentences. Drafts use this to say who is writing and why.</div>
+    </div>
   </div>
 
-  <div class="form-group">
-    <label for="segment">Target Segment *</label>
-    <textarea id="segment" name="segment" placeholder="AI and robotics founders and builders in Southeast Asia" required>{{ form.segment or '' }}</textarea>
-  </div>
-
-  <div class="form-group">
-    <label for="brief">Campaign Brief</label>
-    <textarea id="brief" name="brief" placeholder="Who you are and what you invite people to (used for message drafting)">{{ form.brief or '' }}</textarea>
-  </div>
-
-  <fieldset style="border: 1px solid #d1d5db; border-radius: 6px; padding: 15px; margin-bottom: 20px; max-width: 600px;">
-    <legend style="font-weight: bold; font-size: 15px; padding: 0 5px;">Discovery Sources (provide at least one)</legend>
-
+  <div class="card">
+    <h3>2. Where to look <span class="muted small">(at least one)</span></h3>
     <div class="form-group">
-      <label for="handles">Target Handles (one per line or comma-separated)</label>
-      <textarea id="handles" name="handles" placeholder="e.g. handle1, handle2">{{ form.handles or '' }}</textarea>
+      <label for="handles">X handles</label>
+      <textarea id="handles" name="handles" placeholder="handle1, handle2">{{ form.handles or '' }}</textarea>
+      <div class="help">Best results. Paste people you already think are relevant, one per line or comma-separated.</div>
     </div>
-
     <div class="form-group">
-      <label for="search_keywords">Search Keywords (comma-separated)</label>
-      <input type="text" id="search_keywords" name="search_keywords" placeholder="e.g. robot, LLM, agent" value="{{ form.search_keywords or '' }}">
+      <label for="seed_handles">Seed accounts</label>
+      <input type="text" id="seed_handles" name="seed_handles" placeholder="seed_account" value="{{ form.seed_handles or '' }}">
+      <div class="help">The app reads who these accounts follow. Pick seeds based in your target region: a seed's following list mostly shares its location.</div>
     </div>
-
     <div class="form-group">
-      <label for="search_max_posts">Search Max Posts (1–1000)</label>
-      <input type="number" id="search_max_posts" name="search_max_posts" min="1" max="1000" value="{{ form.search_max_posts or 100 }}">
+      <label for="search_keywords">Search keywords</label>
+      <input type="text" id="search_keywords" name="search_keywords" placeholder="robot, LLM, agent" value="{{ form.search_keywords or '' }}">
+      <div class="help">Finds the authors of recent posts. Often returns news and repost accounts, which are set aside.</div>
     </div>
-
     <div class="form-group">
-      <label for="seed_handles">Seed Handles (read who they follow)</label>
-      <input type="text" id="seed_handles" name="seed_handles" placeholder="e.g. demo_seed_investor" value="{{ form.seed_handles or '' }}">
-    </div>
-
-    <div class="form-group">
-      <label for="seed_following_max">Max Following per Seed (1–1000)</label>
-      <input type="number" id="seed_following_max" name="seed_following_max" min="1" max="1000" value="{{ form.seed_following_max or 100 }}">
-    </div>
-
-    <div class="form-group">
-      <label>
+      <label class="check">
         <input type="checkbox" name="include_sender_followers" value="1" {% if form.include_sender_followers != 0 and form.include_sender_followers != '0' %}checked{% endif %}>
         Include my account's followers
       </label>
     </div>
+    <details>
+      <summary class="small">
+        How many to read from each source
+        <span class="tip-wrap">
+          <span class="tip-icon">?</span>
+          <span class="tip-box">
+            <div class="tip-item"><strong>Accounts read per seed</strong>How many accounts the app reads from each seed's following list. $0.010 per account read.</div>
+            <div class="tip-item"><strong>Posts read per search</strong>How many recent posts the app reads for your keywords; their authors become candidates. $0.005 per post, plus $0.010 per author.</div>
+            <div class="tip-item"><strong>Followers read</strong>How many of your own account's followers the app reads. $0.001 per follower.</div>
+          </span>
+        </span>
+      </summary>
+      <div class="form-group">
+        <label for="seed_following_max">Accounts read per seed (1–1000)</label>
+        <input type="number" id="seed_following_max" name="seed_following_max" min="1" max="1000" value="{{ form.seed_following_max or 100 }}">
+      </div>
+      <div class="form-group">
+        <label for="search_max_posts">Posts read per search (1–1000)</label>
+        <input type="number" id="search_max_posts" name="search_max_posts" min="1" max="1000" value="{{ form.search_max_posts or 100 }}">
+      </div>
+      <div class="form-group">
+        <label for="followers_max">Followers read (1–1000)</label>
+        <input type="number" id="followers_max" name="followers_max" min="1" max="1000" value="{{ form.followers_max or 200 }}">
+      </div>
+    </details>
+  </div>
 
+  <div class="card">
+    <h3>3. Limits</h3>
     <div class="form-group">
-      <label for="followers_max">Max Followers to Read (1–1000)</label>
-      <input type="number" id="followers_max" name="followers_max" min="1" max="1000" value="{{ form.followers_max or 200 }}">
-    </div>
-  </fieldset>
-
-  <fieldset style="border: 1px solid #d1d5db; border-radius: 6px; padding: 15px; margin-bottom: 20px; max-width: 600px;">
-    <legend style="font-weight: bold; font-size: 15px; padding: 0 5px;">Scoring & Budget</legend>
-
-    <div class="form-group">
-      <label for="max_deep_profiles">Max Deep Profiles to Score (1–1000)</label>
+      <label for="max_deep_profiles">
+        People to score in depth (1–1000)
+        <span class="tip-wrap">
+          <span class="tip-icon">?</span>
+          <span class="tip-box">
+            <div class="tip-item"><strong>Who gets here</strong>People who can receive your DMs, are not already messaged or on your do-not-contact list, and passed the profile screen (an individual doing AI or robotics work, not clearly outside your segment).</div>
+            <div class="tip-item"><strong>Who goes first</strong>If more people qualify than this number, those found by more sources go first, then those with more followers. The rest wait for the next run.</div>
+            <div class="tip-item"><strong>Recent posts</strong>Up to 10 original posts (no replies or reposts) are read. No original post in the last 60 days: set aside as inactive.</div>
+            <div class="tip-item"><strong>Scoring</strong>Claude Haiku 4.5 answers fixed questions about role, domain, individual and segment fit, each with a quote. Code checks every quote against the real profile and posts and computes the score from the answers that kept a verified quote.</div>
+          </span>
+        </span>
+      </label>
       <input type="number" id="max_deep_profiles" name="max_deep_profiles" min="1" max="1000" value="{{ form.max_deep_profiles or 40 }}">
+      <div class="help">Their recent posts are read and scored. About $0.06 of X reads per person.</div>
     </div>
-
     <div class="form-group">
-      <label for="min_score">Minimum Score to Keep (1–100)</label>
+      <label for="min_score">
+        Minimum score to keep (1–100)
+        <span class="tip-wrap">
+          <span class="tip-icon">?</span>
+          <span class="tip-box">
+            <div class="tip-item"><strong>Domain: 30 points</strong>Works on AI models, applications, developer tools, infrastructure, robotics or embodied AI.</div>
+            <div class="tip-item"><strong>Role: 25 points</strong>A builder, founder or researcher.</div>
+            <div class="tip-item"><strong>Active: 15 points</strong>An original post in the last 30 days, worked out from post dates, not by the model.</div>
+            <div class="tip-item"><strong>Individual: 15 points</strong>A person, not a company, lab, news or repost account.</div>
+            <div class="tip-item"><strong>Segment fit: 15 points</strong>The profile or a post shows the person is in your segment. Unknown location earns 0 here but is not set aside.</div>
+            <div class="tip-item"><strong>Rule</strong>A criterion counts only if its quote is found in the person's own text. Maximum 100.</div>
+          </span>
+        </span>
+      </label>
       <input type="number" id="min_score" name="min_score" min="1" max="100" value="{{ form.min_score or 60 }}">
+      <div class="help">People scoring below this are set aside.</div>
     </div>
-
     <div class="form-group">
-      <label for="budget_usd">Budget (USD, 0.1–50)</label>
+      <label for="budget_usd">
+        Budget in USD (0.1–50)
+        <span class="tip-wrap">
+          <span class="tip-icon">?</span>
+          <span class="tip-box">
+            <div class="tip-item"><strong>X API (pay-per-use, list prices)</strong>Profile lookup: $0.010 per person<br>Account in a seed's following list: $0.010<br>Post from a search: $0.005, plus $0.010 per author<br>Recent post of a scored person: $0.005<br>Your own follower: $0.001<br>DM sent: about $0.010 (estimate)</div>
+            <div class="tip-item"><strong>Claude Haiku 4.5 on Bedrock</strong>Input: $1.00 per million tokens<br>Output: $5.00 per million tokens<br>In testing: about $0.01 per person screened, scored and drafted</div>
+            <div class="tip-item"><strong>How the budget works</strong>Before each paid step the app checks that it fits in what is left. When it does not, the run stops and everyone already processed is kept. The X developer console is the source of truth for what you were billed.</div>
+          </span>
+        </span>
+      </label>
       <input type="number" id="budget_usd" name="budget_usd" step="0.1" min="0.1" max="50" value="{{ form.budget_usd or 5.0 }}">
+      <div class="help">A run stops when this campaign has spent this much.</div>
     </div>
-  </fieldset>
+  </div>
 
-  <button type="submit" class="btn">Create Campaign</button>
-  <a href="/campaigns" class="btn btn-secondary" style="margin-left: 10px;">Cancel</a>
+  <div class="row">
+    <button type="submit" class="btn">Create campaign</button>
+    <a href="/campaigns" class="btn btn-secondary">Cancel</a>
+  </div>
 </form>
 {% endblock %}
