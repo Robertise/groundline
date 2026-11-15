@@ -1,7 +1,7 @@
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from app.llm.base import LLMResult, LLMError
+from app.llm.base import LLMResult, LLMError, LLMOutputError
 
 
 def make_bedrock_client(
@@ -99,6 +99,17 @@ class BedrockLLM:
         message = output.get("message", {})
         content = message.get("content", [])
 
+        usage = resp.get("usage", {})
+        input_tokens = usage.get("inputTokens", 0)
+        output_tokens = usage.get("outputTokens", 0)
+
+        if resp.get("stopReason") == "max_tokens":
+            raise LLMOutputError(
+                "truncated: the model reply reached max_tokens",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
         tool_input = None
         for block in content:
             if "toolUse" in block and block["toolUse"].get("name") == tool_name:
@@ -107,10 +118,6 @@ class BedrockLLM:
 
         if tool_input is None:
             raise LLMError(f"No toolUse block for {tool_name} returned in output")
-
-        usage = resp.get("usage", {})
-        input_tokens = usage.get("inputTokens", 0)
-        output_tokens = usage.get("outputTokens", 0)
 
         return LLMResult(
             data=tool_input,

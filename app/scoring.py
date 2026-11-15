@@ -20,6 +20,7 @@ WEIGHTS = {
 }
 ACTIVE_DAYS = 30
 INACTIVE_DAYS = 60
+TIER1_BATCH_SIZE = 8
 
 ALLOWED_ROLES = {"builder", "founder", "researcher", "other"}
 ALLOWED_SEGMENTS = {
@@ -47,7 +48,7 @@ def screen_bios(
     if not users:
         return {}, LLMResult(data={}, input_tokens=0, output_tokens=0)
 
-    user_batch = users[:20]
+    user_batch = users[:TIER1_BATCH_SIZE]
 
     def _call(batch: list[XUser]) -> tuple[dict, LLMResult]:
         profiles = [
@@ -74,14 +75,28 @@ def screen_bios(
         )
         return res.data, res
 
-    data, res1 = _call(user_batch)
-    total_in = res1.input_tokens
-    total_out = res1.output_tokens
+    total_in = 0
+    total_out = 0
+    results_by_id: dict[str, dict] = {}
 
-    data = coerce_json_fields(data, list_fields=("results",))
-    results_by_id = {}
-    raw_results = data.get("results")
-    if isinstance(raw_results, list):
+    def _collect(batch: list[XUser]) -> None:
+        nonlocal total_in, total_out
+        try:
+            data, res = _call(batch)
+        except LLMOutputError as exc:
+            total_in += exc.input_tokens
+            total_out += exc.output_tokens
+            if len(batch) > 1:
+                mid = len(batch) // 2
+                _collect(batch[:mid])
+                _collect(batch[mid:])
+            return
+        total_in += res.input_tokens
+        total_out += res.output_tokens
+        data = coerce_json_fields(data, list_fields=("results",))
+        raw_results = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(raw_results, list):
+            return
         for r in raw_results:
             if not isinstance(r, dict):
                 continue
@@ -90,22 +105,12 @@ def screen_bios(
                 continue
             results_by_id[uid] = r
 
-    # Check for missing ids and retry once
+    _collect(user_batch)
+
+    # One more attempt for profiles the model left out
     missing = [u for u in user_batch if u.id not in results_by_id]
     if missing:
-        retry_data, res2 = _call(missing)
-        total_in += res2.input_tokens
-        total_out += res2.output_tokens
-        retry_data = coerce_json_fields(retry_data, list_fields=("results",))
-        raw_retry = retry_data.get("results")
-        if isinstance(raw_retry, list):
-            for r in raw_retry:
-                if not isinstance(r, dict):
-                    continue
-                uid = r.get("x_user_id")
-                if not isinstance(uid, str) or not uid:
-                    continue
-                results_by_id[uid] = r
+        _collect(missing)
 
     # Validate quotes for passed profiles
     users_dict = {u.id: u for u in user_batch}

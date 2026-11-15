@@ -5,7 +5,7 @@ import pytest
 from app.llm.base import LLMResult, LLMError, LLMOutputError
 from app.llm.bedrock import BedrockLLM
 from app.prompts import BIO_SCREEN_SYSTEM, SCORING_SYSTEM
-from app.scoring import compute_score, score_user, screen_bios, WEIGHTS
+from app.scoring import compute_score, score_user, screen_bios, WEIGHTS, TIER1_BATCH_SIZE
 from app.x.base import XUser, XPost
 
 
@@ -129,6 +129,29 @@ def test_bedrock_adapter_parses_tool_use_and_usage():
     assert res.data == {"score": 90, "valid": True}
     assert res.input_tokens == 320
     assert res.output_tokens == 85
+
+
+def test_bedrock_adapter_raises_output_error_when_reply_is_truncated():
+    class TruncatedBedrockClient:
+        def converse(self, **kwargs):
+            return {
+                "stopReason": "max_tokens",
+                "output": {
+                    "message": {
+                        "content": [
+                            {"toolUse": {"name": "test_tool", "input": {}}}
+                        ]
+                    }
+                },
+                "usage": {"inputTokens": 300, "outputTokens": 2000},
+            }
+
+    bedrock = BedrockLLM("test_model", "us-east-1", client=TruncatedBedrockClient())
+    with pytest.raises(LLMOutputError) as exc_info:
+        bedrock.call_tool("system", "user", "test_tool", {})
+    err = exc_info.value
+    assert err.input_tokens == 300
+    assert err.output_tokens == 2000
 
 
 def test_bedrock_adapter_raises_without_tool_use():
@@ -570,4 +593,89 @@ def test_prompts_say_flag_or_nationality_is_not_a_location():
     sentence = "A flag emoji, a nationality, a language, or a place where the person studied or worked before is not a"
     assert sentence in SCORING_SYSTEM
     assert sentence in BIO_SCREEN_SYSTEM
+
+
+def _make_users(n: int) -> list:
+    return [
+        XUser(
+            id=f"u{i}",
+            username=f"user{i}",
+            bio="Building LLM agents and robotics tools for developers every day",
+        )
+        for i in range(n)
+    ]
+
+
+def test_screen_bios_sends_at_most_eight_profiles_per_call():
+    call_sizes = []
+
+    class RecordingLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            _, json_part = user.split("Profiles (JSON):\n", 1)
+            profiles = json.loads(json_part)
+            call_sizes.append(len(profiles))
+            results = [
+                {
+                    "x_user_id": p["x_user_id"],
+                    "pass": True,
+                    "reason": "ok",
+                    "quote": "Building LLM agents and robotics tools for developers every day",
+                }
+                for p in profiles
+            ]
+            return LLMResult(data={"results": results}, input_tokens=100, output_tokens=50)
+
+    users = _make_users(12)
+    results, _ = screen_bios(RecordingLLM(), "AI", users, {})
+
+    assert all(s <= TIER1_BATCH_SIZE for s in call_sizes), f"A call exceeded 8 profiles: {call_sizes}"
+    assert len(results) == TIER1_BATCH_SIZE  # only the first batch of 8 is processed
+
+
+def test_screen_bios_splits_a_batch_when_the_reply_is_truncated():
+    successful_in = 0
+    successful_out = 0
+    failed_in = 0
+    failed_out = 0
+
+    class SplittingLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            nonlocal successful_in, successful_out, failed_in, failed_out
+            _, json_part = user.split("Profiles (JSON):\n", 1)
+            profiles = json.loads(json_part)
+            if len(profiles) > 2:
+                failed_in += 100
+                failed_out += 50
+                raise LLMOutputError("truncated", input_tokens=100, output_tokens=50)
+            successful_in += 80
+            successful_out += 40
+            results = [
+                {
+                    "x_user_id": p["x_user_id"],
+                    "pass": True,
+                    "reason": "ok",
+                    "quote": "Building LLM agents and robotics tools for developers every day",
+                }
+                for p in profiles
+            ]
+            return LLMResult(data={"results": results}, input_tokens=80, output_tokens=40)
+
+    users = _make_users(8)
+    results, llm_res = screen_bios(SplittingLLM(), "AI", users, {})
+
+    assert len(results) == 8
+    # Token totals must include the failed calls
+    assert llm_res.input_tokens > successful_in, (
+        f"input_tokens {llm_res.input_tokens} should exceed successful-only {successful_in}"
+    )
+
+
+def test_screen_bios_gives_no_result_when_even_one_profile_is_truncated():
+    class AlwaysTruncatingLLM:
+        def call_tool(self, system, user, tool_name, tool_schema, max_tokens=2000):
+            raise LLMOutputError("truncated", input_tokens=100, output_tokens=50)
+
+    users = _make_users(4)
+    results, _ = screen_bios(AlwaysTruncatingLLM(), "AI", users, {})
+    assert results == {}
 
