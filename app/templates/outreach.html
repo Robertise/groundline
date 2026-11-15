@@ -6,6 +6,10 @@
   Sent today: {{ sent_today }} of {{ daily_cap }}
 </p>
 
+{% if allowed_handles %}
+  <div class="banner-msg">Test allowlist is on: only {% for h in allowed_handles %}@{{ h }}{% if not loop.last %}, {% endif %}{% endfor %} can be messaged. Clear GROUNDLINE_LIVE_ALLOWED_HANDLES to lift it.</div>
+{% endif %}
+
 {% if sending_now %}
   <div class="banner-msg">Sending is in progress. Refresh to see new results.</div>
 {% endif %}
@@ -91,6 +95,9 @@
             <a href="/campaigns/{{ row.campaign_id }}/review?tab=approved" style="font-size: 13px; text-decoration: none; color: #2563eb;">
               Withdraw on the review page
             </a>
+            {% if row.held_by_allowlist %}
+              <br><small style="color: #b45309;">Held: not on the test allowlist, so it will not be sent.</small>
+            {% endif %}
             {% if row.state_reason %}
               <br><small style="color: #6b7280;">{{ row.reason_text }}</small>
             {% endif %}

@@ -132,10 +132,17 @@ def test_send_twice_never_sends_a_second_time(outreach_setup):
 
 def test_send_is_refused_in_dry_run_mode(outreach_setup, monkeypatch):
     monkeypatch.setenv("GROUNDLINE_MODE", "dry_run")
+    calls = []
+
+    def spy(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr("app.routes_outreach.run_send_batch", spy)
     with TestClient(app) as client:
-        resp = client.post("/outreach/send", follow_redirects=True)
-        assert resp.status_code == 200
-        assert "Dry-run mode never sends. Set GROUNDLINE_MODE=live to send." in resp.text
+        resp = client.post("/outreach/send", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "error=Dry-run" in resp.headers["location"]
+        assert calls == []
 
         conn = connect(outreach_setup)
         cur = conn.execute("SELECT state FROM outreach")
@@ -355,4 +362,33 @@ def test_nav_links_to_limits(outreach_setup):
         resp = client.get("/campaigns")
         assert resp.status_code == 200
         assert '<a href="/limits">Limits</a>' in resp.text
+
+
+def test_queue_explains_message_held_by_live_allowlist(outreach_setup, monkeypatch):
+    monkeypatch.setenv("GROUNDLINE_MODE", "live")
+    monkeypatch.setenv("GROUNDLINE_LIVE_ALLOWED_HANDLES", "someone_else")
+    monkeypatch.setenv("GROUNDLINE_X_CLIENT_ID", "test_client_id")
+    monkeypatch.setenv("GROUNDLINE_X_CLIENT_SECRET", "test_client_secret")
+    monkeypatch.setenv("GROUNDLINE_SECRET_KEY", "bW9ja19zZWNyZXRfa2V5X2Zvcl90ZXN0aW5nXzMyYnl0ZXM=")
+
+    with TestClient(app) as client:
+        resp = client.get("/outreach?tab=queue")
+        assert resp.status_code == 200
+        assert "Test allowlist is on" in resp.text
+        assert "Held: not on the test allowlist" in resp.text
+
+
+def test_no_allowlist_banner_in_mock_mode(outreach_setup, monkeypatch):
+    monkeypatch.setenv("GROUNDLINE_MODE", "mock")
+    monkeypatch.setenv("GROUNDLINE_LIVE_ALLOWED_HANDLES", "someone_else")
+    monkeypatch.setenv("GROUNDLINE_X_CLIENT_ID", "test_client_id")
+    monkeypatch.setenv("GROUNDLINE_X_CLIENT_SECRET", "test_client_secret")
+    monkeypatch.setenv("GROUNDLINE_SECRET_KEY", "bW9ja19zZWNyZXRfa2V5X2Zvcl90ZXN0aW5nXzMyYnl0ZXM=")
+
+    with TestClient(app) as client:
+        resp = client.get("/outreach?tab=queue")
+        assert resp.status_code == 200
+        assert "Test allowlist is on" not in resp.text
+        assert "Held: not on the test allowlist" not in resp.text
+
 

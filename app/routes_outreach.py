@@ -106,6 +106,18 @@ def outreach_page(
     if tab not in TAB_STATES:
         tab = "queue"
 
+    allowed_handles = (
+        sorted(
+            {
+                h.strip().lstrip("@").lower()
+                for h in settings.live_allowed_handles.split(",")
+                if h.strip()
+            }
+        )
+        if settings.mode == "live"
+        else []
+    )
+
     sender = current_sender(conn, settings)
     if not sender:
         counts = {"queue": 0, "sent": 0, "replies": 0, "attention": 0}
@@ -120,6 +132,7 @@ def outreach_page(
                 "sending_now": False,
                 "pace_seconds": settings.min_seconds_between_sends,
                 "discovery_problems": [],
+                "allowed_handles": [],
             }
         )
         return templates.TemplateResponse(request=request, name="outreach.html", context=ctx)
@@ -212,6 +225,9 @@ def outreach_page(
         row_dict["conversation_url"] = (
             f"https://x.com/messages/{conv_id}" if conv_id else None
         )
+        row_dict["held_by_allowlist"] = bool(allowed_handles) and (
+            username.lower() not in allowed_handles
+        )
         rows.append(row_dict)
 
     discovery_problems = []
@@ -239,6 +255,7 @@ def outreach_page(
             "sending_now": sending_now,
             "pace_seconds": settings.min_seconds_between_sends,
             "discovery_problems": discovery_problems,
+            "allowed_handles": allowed_handles,
         }
     )
     return templates.TemplateResponse(request=request, name="outreach.html", context=ctx)
