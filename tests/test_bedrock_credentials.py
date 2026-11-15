@@ -151,3 +151,12 @@ def test_build_llm_passes_settings_through(monkeypatch):
         "aws_session_token": "test_session_token",
         "region_name": "ap-southeast-1",
     }
+
+
+def test_bedrock_client_retries_throttling_with_adaptive_backoff():
+    client = make_bedrock_client(
+        region="ap-southeast-1", access_key_id="AKIA_TEST", secret_access_key="secret_test"
+    )
+    retries = client.meta.config.retries
+    assert retries["mode"] == "adaptive"
+    assert retries.get("max_attempts", retries.get("total_max_attempts", 0) - 1) == 8

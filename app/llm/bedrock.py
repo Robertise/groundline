@@ -1,7 +1,12 @@
 import boto3
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from app.llm.base import LLMResult, LLMError, LLMOutputError
+
+# Bedrock throttles bursts of calls (seen while drafting several people in a row).
+# Adaptive retries back off and retry ThrottlingException before it reaches the app.
+BEDROCK_CLIENT_CONFIG = Config(retries={"max_attempts": 8, "mode": "adaptive"})
 
 
 def make_bedrock_client(
@@ -27,7 +32,7 @@ def make_bedrock_client(
         session = boto3.Session(profile_name=profile, region_name=region)
     else:
         session = boto3.Session(region_name=region)
-    return session.client("bedrock-runtime")
+    return session.client("bedrock-runtime", config=BEDROCK_CLIENT_CONFIG)
 
 
 class BedrockLLM:
