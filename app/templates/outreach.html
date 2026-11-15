@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h2>Outreach</h2>
+<h1>Outreach</h1>
+<p class="muted">Approved messages from all campaigns. They go out one at a time, and nobody is messaged twice.</p>
 <p style="margin-top: -5px; color: #4b5563; font-size: 14px;">
   Sent today: {{ sent_today }} of {{ daily_cap }}
 </p>
@@ -75,13 +76,13 @@
       {% for row in rows %}
       <tr>
         <td>
-          <a href="{{ row.profile_url }}" target="_blank" rel="noopener" style="font-weight: 600; text-decoration: none; color: #2563eb;">
-            @{{ row.username }}
+          <a href="{{ row.profile_url }}" target="_blank" rel="noopener">
+            <strong>@{{ row.username }}</strong>
           </a>
           <br><small style="color: #6b7280;">{{ row.name or "" }}</small>
         </td>
         <td>
-          <a href="/campaigns/{{ row.campaign_id }}" style="text-decoration: none; color: #2563eb;">
+          <a href="/campaigns/{{ row.campaign_id }}">
             {{ row.campaign_name }}
           </a>
         </td>
@@ -90,9 +91,9 @@
         </td>
 
         {% if tab == 'queue' %}
-          <td style="white-space: nowrap; font-size: 13px;">{{ row.approved_at }}</td>
+          <td style="white-space: nowrap; font-size: 13px;">{{ row.approved_at|short_time }}</td>
           <td>
-            <a href="/campaigns/{{ row.campaign_id }}/review?tab=approved" style="font-size: 13px; text-decoration: none; color: #2563eb;">
+            <a href="/campaigns/{{ row.campaign_id }}/review?tab=approved">
               Withdraw on the review page
             </a>
             {% if row.held_by_allowlist %}
@@ -104,15 +105,15 @@
           </td>
 
         {% elif tab == 'sent' %}
-          <td style="white-space: nowrap; font-size: 13px;">{{ row.sent_at }}</td>
+          <td style="white-space: nowrap; font-size: 13px;">{{ row.sent_at|short_time }}</td>
           <td style="font-size: 13px; white-space: nowrap;">
             {% if row.conversation_url %}
-              <a href="{{ row.conversation_url }}" target="_blank" rel="noopener" style="text-decoration: none; color: #2563eb;">
+              <a href="{{ row.conversation_url }}" target="_blank" rel="noopener">
                 Open conversation on X
               </a>
               <br>
             {% endif %}
-            <a href="{{ row.profile_url }}" target="_blank" rel="noopener" style="text-decoration: none; color: #2563eb;">
+            <a href="{{ row.profile_url }}" target="_blank" rel="noopener">
               Open profile
             </a>
           </td>
@@ -120,21 +121,21 @@
             <form method="post" action="/outreach/{{ row.id }}/replied">
               <input type="text" name="note" placeholder="What did they say? (optional)" style="margin-bottom: 5px; width: 220px; font-size: 13px; padding: 4px 8px;">
               <br>
-              <button type="submit" class="btn" style="padding: 4px 8px; font-size: 12px;">Mark replied</button>
+              <button type="submit" class="btn btn-sm">Mark replied</button>
             </form>
           </td>
 
         {% elif tab == 'replies' %}
-          <td style="white-space: nowrap; font-size: 13px;">{{ row.updated_at }}</td>
+          <td style="white-space: nowrap; font-size: 13px;">{{ row.updated_at|short_time }}</td>
           <td style="max-width: 250px; font-size: 13px; white-space: pre-wrap;">{{ row.reply_note or "" }}</td>
           <td style="font-size: 13px; white-space: nowrap;">
             {% if row.conversation_url %}
-              <a href="{{ row.conversation_url }}" target="_blank" rel="noopener" style="text-decoration: none; color: #2563eb;">
+              <a href="{{ row.conversation_url }}" target="_blank" rel="noopener">
                 Open conversation on X
               </a>
               <br>
             {% endif %}
-            <a href="{{ row.profile_url }}" target="_blank" rel="noopener" style="text-decoration: none; color: #2563eb;">
+            <a href="{{ row.profile_url }}" target="_blank" rel="noopener">
               Open profile
             </a>
           </td>
@@ -148,25 +149,25 @@
             {% if row.state == 'unknown' %}
               <div style="margin-bottom: 6px; font-size: 13px;">
                 {% if row.conversation_url %}
-                  <a href="{{ row.conversation_url }}" target="_blank" rel="noopener" style="text-decoration: none; color: #2563eb;">
+                  <a href="{{ row.conversation_url }}" target="_blank" rel="noopener">
                     Open conversation on X
                   </a>
                   <br>
                 {% endif %}
-                <a href="{{ row.profile_url }}" target="_blank" rel="noopener" style="text-decoration: none; color: #2563eb;">
+                <a href="{{ row.profile_url }}" target="_blank" rel="noopener">
                   Open profile
                 </a>
               </div>
               <div style="display: flex; gap: 6px;">
                 <form method="post" action="/outreach/{{ row.id }}/resolve" style="display: inline;">
                   <input type="hidden" name="delivered" value="yes">
-                  <button type="submit" class="btn" style="padding: 4px 8px; font-size: 12px; background: #059669;">
+                  <button type="submit" class="btn btn-green btn-sm">
                     It was delivered
                   </button>
                 </form>
                 <form method="post" action="/outreach/{{ row.id }}/resolve" style="display: inline;">
                   <input type="hidden" name="delivered" value="no">
-                  <button type="submit" class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;">
+                  <button type="submit" class="btn btn-secondary btn-sm">
                     It was not delivered
                   </button>
                 </form>
@@ -174,13 +175,13 @@
 
             {% elif row.state == 'failed' %}
               <form method="post" action="/outreach/{{ row.id }}/retry" style="display: inline;">
-                <button type="submit" class="btn" style="padding: 4px 8px; font-size: 12px;">Retry</button>
+                <button type="submit" class="btn btn-secondary btn-sm">Retry</button>
               </form>
 
             {% elif row.state == 'blocked' %}
               {% if row.state_reason != 'suppressed' %}
                 <form method="post" action="/outreach/{{ row.id }}/recheck" style="display: inline;">
-                  <button type="submit" class="btn" style="padding: 4px 8px; font-size: 12px;">Check again</button>
+                  <button type="submit" class="btn btn-secondary btn-sm">Check again</button>
                 </form>
               {% endif %}
             {% endif %}
@@ -194,11 +195,11 @@
 
 {% if tab == 'attention' and discovery_problems %}
   <div style="margin-top: 25px; padding-top: 15px; border-top: 1px solid #e5e7eb;">
-    <h3 style="margin-bottom: 10px;">Discovery Problems</h3>
+    <h3 style="margin-bottom: 10px;">Discovery runs that stopped</h3>
     <ul>
       {% for dp in discovery_problems %}
         <li style="margin-bottom: 5px; font-size: 14px;">
-          Discovery for <a href="/campaigns/{{ dp.campaign_id }}" style="text-decoration: none; color: #2563eb; font-weight: 500;">{{ dp.campaign_name }}</a> stopped: {{ dp.status }}
+          Discovery for <a href="/campaigns/{{ dp.campaign_id }}">{{ dp.campaign_name }}</a> stopped: {{ dp.status }}
         </li>
       {% endfor %}
     </ul>

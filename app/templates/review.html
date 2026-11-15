@@ -1,10 +1,9 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div style="margin-bottom: 20px;">
-  <a href="/campaigns/{{ campaign.id }}" style="text-decoration: none; color: #2563eb; font-size: 14px;">&larr; Back to {{ campaign.name }}</a>
-  <h2 style="margin-top: 10px;">Review Drafts — {{ campaign.name }}</h2>
-</div>
+<a href="/campaigns/{{ campaign.id }}" class="back">&larr; Back to {{ campaign.name }}</a>
+<h2>Review Drafts — {{ campaign.name }}</h2>
+{% set step = "review" %}{% include "_steps.html" %}
 
 <div class="tabs">
   <a href="/campaigns/{{ campaign.id }}/review?tab=drafts" class="{% if current_tab == 'drafts' %}active{% endif %}">
@@ -20,11 +19,11 @@
 
 {% if current_tab == 'drafts' %}
   {% if not drafts %}
-    <p style="color: #6b7280; margin-top: 20px;">No drafts ready for review. Click "Draft messages" on the campaign page to generate drafts.</p>
+    <p style="color: #6b7280; margin-top: 20px;">No drafts waiting. Use Draft messages on the campaign page to write some.</p>
   {% else %}
     <div style="display: flex; flex-direction: column; gap: 25px; margin-top: 20px;">
       {% for card in drafts %}
-      <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.05); display: flex; flex-wrap: wrap; gap: 25px;">
+      <div class="card" style="padding: 20px; display: flex; flex-wrap: wrap; gap: 25px;">
         
         <!-- Left column: Prospect details and evidence -->
         <div style="flex: 1; min-width: 320px;">
@@ -86,6 +85,7 @@
             </div>
 
             <textarea name="text" rows="8" style="width: 100%; max-width: 100%; box-sizing: border-box; font-family: inherit; font-size: 14px; line-height: 1.5; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px;">{{ card.draft.text }}</textarea>
+            <div class="help">Edit the text, press Save edit, then Approve. Approval is for this exact text.</div>
 
             <!-- Claims list -->
             {% if card.draft.claims %}
@@ -122,9 +122,9 @@
             <div style="margin-top: 15px; display: flex; gap: 10px; align-items: center;">
               <button type="submit" formaction="/prospects/{{ card.prospect.id }}/edit" class="btn btn-secondary">Save edit</button>
               {% if card.can_approve_ok %}
-                <button type="submit" formaction="/prospects/{{ card.prospect.id }}/approve" class="btn" style="background: #059669;">Approve</button>
+                <button type="submit" formaction="/prospects/{{ card.prospect.id }}/approve" class="btn btn-green">Approve</button>
               {% else %}
-                <button type="button" class="btn" style="background: #9ca3af; cursor: not-allowed;" disabled title="{{ card.can_approve_reason }}">Approve</button>
+                <button type="button" class="btn" disabled title="{{ card.can_approve_reason }}">Approve</button>
                 <small style="color: #dc2626; font-size: 12px;">{{ card.can_approve_reason }}</small>
               {% endif %}
             </div>
@@ -132,17 +132,18 @@
 
           <!-- Separate small action forms -->
           <div style="margin-top: 15px; padding-top: 12px; border-top: 1px solid #f3f4f6; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+            <span class="small muted">Other actions:</span>
             <form method="post" action="/prospects/{{ card.prospect.id }}/draft" style="display: inline;">
-              <button type="submit" class="btn" style="background: #4b5563; font-size: 12px; padding: 4px 8px;">Redraft</button>
+              <button type="submit" class="btn btn-secondary btn-sm">Redraft</button>
             </form>
 
             <form method="post" action="/prospects/{{ card.prospect.id }}/reject" style="display: inline-flex; gap: 4px; align-items: center;">
               <input type="text" name="reason" placeholder="Reason (optional)" maxlength="200" style="padding: 4px 8px; font-size: 12px; width: 150px; border: 1px solid #d1d5db; border-radius: 4px;">
-              <button type="submit" class="btn" style="background: #dc2626; font-size: 12px; padding: 4px 8px;">Reject</button>
+              <button type="submit" class="btn btn-danger btn-sm">Reject</button>
             </form>
 
             <form method="post" action="/prospects/{{ card.prospect.id }}/do-not-contact" style="display: inline;">
-              <button type="submit" class="btn" style="background: #7f1d1d; font-size: 12px; padding: 4px 8px;">Do not contact</button>
+              <button type="submit" class="btn btn-danger btn-sm">Do not contact</button>
             </form>
           </div>
         </div>
@@ -153,9 +154,7 @@
   {% endif %}
 
 {% elif current_tab == 'approved' %}
-  <div style="margin-top: 15px; margin-bottom: 20px; background: #e0f2fe; border: 1px solid #7dd3fc; color: #0369a1; padding: 10px 15px; border-radius: 6px; font-size: 14px;">
-    <strong>Note:</strong> Sending is not available yet.
-  </div>
+  <div class="banner-msg">Approved messages are sent from the Outreach page, one at a time. <a href="/outreach?tab=queue">Go to Outreach</a></div>
 
   {% if not approved_list %}
     <p style="color: #6b7280;">No approved messages yet.</p>
@@ -178,7 +177,7 @@
             <br><small style="color: #6b7280;">{{ o.name or "" }}</small>
           </td>
           <td style="max-width: 400px; font-size: 13px; white-space: pre-wrap;">{{ o.final_text }}</td>
-          <td style="font-size: 13px; white-space: nowrap;">{{ o.approved_at }}</td>
+          <td style="font-size: 13px; white-space: nowrap;">{{ o.approved_at|short_time }}</td>
           <td>
             {% if o.state == 'approved' %}
               <span class="badge" style="background: #dcfce7; color: #15803d;">Waiting to send</span>
@@ -191,11 +190,11 @@
           <td>
             {% if o.state == 'approved' %}
               <form method="post" action="/outreach/{{ o.id }}/withdraw" style="display: inline;">
-                <button type="submit" class="btn" style="background: #6b7280; font-size: 12px; padding: 4px 8px;">Withdraw</button>
+                <button type="submit" class="btn btn-secondary btn-sm">Withdraw</button>
               </form>
             {% elif o.state == 'cancelled' %}
               <form method="post" action="/outreach/{{ o.id }}/reapprove" style="display: inline;">
-                <button type="submit" class="btn" style="background: #059669; font-size: 12px; padding: 4px 8px;">Re-approve</button>
+                <button type="submit" class="btn btn-green btn-sm">Re-approve</button>
               </form>
             {% endif %}
           </td>

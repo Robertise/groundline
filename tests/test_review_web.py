@@ -425,3 +425,25 @@ def test_edit_then_approve_with_crlf_round_trip(review_setup):
         assert outreach_row is not None
         assert "\r" not in outreach_row["final_text"]
         assert "\n\n" in outreach_row["final_text"]
+
+
+def test_approved_tab_points_to_outreach(review_setup):
+    with TestClient(app) as client:
+        conn = connect(review_setup)
+        cur = conn.execute("SELECT id FROM prospects WHERE campaign_id = 1 AND state = 'drafted' LIMIT 1")
+        pid = cur.fetchone()["id"]
+        d = latest_draft(conn, pid)
+        conn.close()
+
+        resp = client.post(
+            f"/prospects/{pid}/approve",
+            data={"text": d["text"]},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+
+        app_resp = client.get("/campaigns/1/review?tab=approved")
+        assert app_resp.status_code == 200
+        assert "Sending is not available yet" not in app_resp.text
+        assert "/outreach?tab=queue" in app_resp.text
+
