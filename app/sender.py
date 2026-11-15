@@ -51,6 +51,13 @@ def recover_on_startup(conn: sqlite3.Connection, clock) -> int:
         return len(ids)
 
 
+def clear_send_locks(conn: sqlite3.Connection) -> int:
+    """Removes all send locks. Call only at startup: one process, so no batch can be running."""
+    with db.transaction(conn):
+        cur = conn.execute("DELETE FROM send_locks")
+        return cur.rowcount
+
+
 def send_one(
     conn: sqlite3.Connection,
     outreach_id: int,

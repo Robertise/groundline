@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from app.config import get_settings
 from app.clock import SystemClock
 from app.db import connect, init_db
-from app.sender import recover_on_startup
+from app.sender import recover_on_startup, clear_send_locks
 from app import routes, routes_auth, routes_outreach
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,8 @@ async def lifespan(app: FastAPI):
     init_db(conn)
     recovered_count = recover_on_startup(conn, SystemClock())
     logger.info("Recovered %d rows on startup", recovered_count)
+    cleared_locks = clear_send_locks(conn)
+    logger.info("Cleared %d send locks on startup", cleared_locks)
     yield
     conn.close()
 

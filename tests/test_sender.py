@@ -7,7 +7,7 @@ from app.clock import iso
 from app.config import Settings
 from app.db import connect
 from app import db
-from app.sender import send_one, send_batch, recover_on_startup
+from app.sender import send_one, send_batch, recover_on_startup, clear_send_locks
 from app.approval import (
     resolve_unknown,
     add_suppression,
@@ -503,5 +503,36 @@ def test_withdrawal_during_precheck_is_skipped_not_an_error(conn, clock, setting
     cur = conn.execute("SELECT state FROM outreach WHERE id = ?", (oid,))
     row = cur.fetchone()
     assert row["state"] == "cancelled"
+
+
+def test_clear_send_locks_removes_all_locks(conn, clock):
+    now_str = iso(clock.now())
+    future_time = iso(clock.now() + timedelta(seconds=10000))
+    with db.transaction(conn):
+        cur1 = conn.execute(
+            "INSERT INTO sender_accounts (x_user_id, username, daily_send_cap, created_at) VALUES (?, ?, ?, ?)",
+            ("sender_1", "user1", 20, now_str),
+        )
+        s1 = cur1.lastrowid
+        cur2 = conn.execute(
+            "INSERT INTO sender_accounts (x_user_id, username, daily_send_cap, created_at) VALUES (?, ?, ?, ?)",
+            ("sender_2", "user2", 20, now_str),
+        )
+        s2 = cur2.lastrowid
+        conn.execute(
+            "INSERT INTO send_locks (sender_account_id, owner, expires_at) VALUES (?, 'worker1', ?)",
+            (s1, future_time),
+        )
+        conn.execute(
+            "INSERT INTO send_locks (sender_account_id, owner, expires_at) VALUES (?, 'worker2', ?)",
+            (s2, future_time),
+        )
+
+    removed = clear_send_locks(conn)
+    assert removed == 2
+
+    cur = conn.execute("SELECT COUNT(*) FROM send_locks")
+    assert cur.fetchone()[0] == 0
+
 
 
