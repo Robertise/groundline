@@ -1,5 +1,12 @@
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DEFAULT_DB_FILES = {
+    "mock": "./data/groundline.db",
+    "dry_run": "./data/groundline-dryrun.db",
+    "live": "./data/groundline-live.db",
+}
 
 
 class Settings(BaseSettings):
@@ -7,7 +14,7 @@ class Settings(BaseSettings):
         env_prefix="GROUNDLINE_", env_file=".env", extra="ignore"
     )
     mode: str = "mock"  # one of: mock, dry_run, live (only mock is used in P1)
-    db_path: str = "./data/groundline.db"
+    db_path: str = ""  # empty = ./data/<default file for the mode>
     timezone: str = "Asia/Ho_Chi_Minh"
     daily_send_cap: int = 20
     min_seconds_between_sends: float = 30.0
@@ -36,6 +43,12 @@ class Settings(BaseSettings):
         if v not in allowed:
             raise ValueError(f"mode must be one of {allowed}, got {v!r}")
         return v
+
+    @model_validator(mode="after")
+    def default_db_path_for_mode(self):
+        if not self.db_path:
+            self.db_path = DEFAULT_DB_FILES[self.mode]
+        return self
 
 
 def missing_live_settings(s: Settings) -> list[str]:
